@@ -5,7 +5,28 @@
     "version": "0.1.0",
     "scheme": "appbase",
     "platforms": ["ios", "android"],
-    "ios": { "supportsTablet": true },
-    "android": { "package": "com.local.base" }
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.local.base"
+    },
+    "android": {
+      "package": "com.local.base",
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-sqlite",
+        {
+          "enableFTS": true
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
   }
 }

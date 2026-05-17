@@ -3,6 +3,9 @@
 
 > Read this entire file before writing a single line of code.
 > This file is the source of truth for architecture, security, and conventions.
+>
+> **Status (2026-05-16):** §16 steps 1–3 complete (monorepo skeleton, base backend with
+> auth/audit/db, MentraOS AppServer base). **Next: step 4 — Expo mobile scaffold.**
 
 ---
 
@@ -138,7 +141,7 @@ tech-garden/
 | Runtime | Node.js 20 LTS | LTS = security patches guaranteed |
 | Language | TypeScript 5.x (strict) | Catches type-coercion injection bugs at compile time |
 | Framework | Express 4.x | Mature, well-audited |
-| Glasses SDK | @mentraos/sdk | MentraOS official SDK |
+| Glasses SDK | @mentra/sdk | MentraOS official SDK |
 | AI | @anthropic-ai/sdk (claude-sonnet-4-20250514) | Vision + language in one model |
 | Auth | jsonwebtoken + bcryptjs | Industry standard |
 | Rate limiting | express-rate-limit + rate-limit-redis | Per-route, per-user limits |
@@ -287,8 +290,23 @@ SUPABASE_SERVICE_KEY=            # secret service key — backend only, NEVER pu
 
 # --- Remote access (add vars here when remote access method is chosen) ---
 # See infra/remote-access/OPTIONS.md
+
+# --- Logging ---
 LOG_DIR=./logs
 LOG_LEVEL=info                   # 'debug' in dev, 'info' or 'warn' in prod
+
+# --- CORS ---
+# Comma-separated list of allowed Origin headers for browser callers.
+# Native mobile (iOS/Android/Expo) does not send Origin and is unaffected.
+CORS_ALLOWED_ORIGINS=
+
+# --- MentraOS (smart glasses) ---
+# MENTRA_PACKAGE_NAME and MENTRA_API_KEY come from console.mentra.glass.
+# Both must be set together. Leave both blank to skip starting the glasses
+# AppServer (useful for backend-only dev before registering an app).
+MENTRA_PACKAGE_NAME=
+MENTRA_API_KEY=
+MENTRA_PORT=7010
 ```
 
 ---
@@ -691,7 +709,7 @@ Pin all versions in `package.json` (no `^` or `~`). Required packages and their 
 - `bcryptjs` — password + token hashing, cost 12 (OWASP A02)
 - `winston` — structured audit logging (OWASP A09)
 - `cors` — strict origin whitelist (OWASP A05)
-- `@mentraos/sdk` — glasses integration
+- `@mentra/sdk` — glasses integration
 - `@anthropic-ai/sdk` — Claude API
 - `axios` — HA HTTP client, pin version
 - `better-sqlite3` — local DB, parameterised queries only

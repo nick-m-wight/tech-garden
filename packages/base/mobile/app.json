@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "base",
+    "slug": "base",
+    "version": "0.1.0",
+    "scheme": "appbase",
+    "platforms": ["ios", "android"],
+    "ios": { "supportsTablet": true },
+    "android": { "package": "com.local.base" }
+  }
+}

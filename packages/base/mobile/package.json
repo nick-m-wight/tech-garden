@@ -1,0 +1,14 @@
+{
+  "name": "@local/base-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Base mobile — Expo managed workflow scaffold (Android + iOS)",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

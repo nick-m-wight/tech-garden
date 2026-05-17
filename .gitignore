@@ -1,0 +1,48 @@
+# Secrets — never commit
+.env
+.env.dev
+.env.prod
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+keys/
+
+# Node
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+npm-debug.log*
+
+# Data / logs
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/dev/*
+data/prod/*
+!data/dev/.gitkeep
+!data/prod/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# Claude Code local-machine state (the non-".local." settings.json is meant to be committed)
+.claude/settings.local.json
+
+# Photos (encrypted storage)
+*.enc
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Expo
+.expo/
+.expo-shared/
+
+# Coverage
+coverage/

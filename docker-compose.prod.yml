@@ -1,0 +1,3 @@
+# Placeholder. Real compose definition arrives in CLAUDE.md Section 16 step 12.
+# Authoritative spec lives in CLAUDE.md Section 13.
+# Backend MUST bind to 127.0.0.1 only — remote access via separate tunnel layer.

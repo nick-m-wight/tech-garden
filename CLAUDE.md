@@ -4,7 +4,7 @@
 > Read this entire file before writing a single line of code.
 > Detailed specs live in `docs/specs/` — links per section below.
 >
-> **Status (2026-05-17):** §16 steps 1–4 complete. `base-v1.0` tagged. **Next: §16 step 6 — garden HA client.**
+> **Status (2026-05-17):** §16 steps 1–8 complete. `base-v1.0` tagged. **Next: §16 step 9 — garden glasses session.**
 
 ---
 

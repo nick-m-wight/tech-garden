@@ -3,6 +3,8 @@
 .env.dev
 .env.prod
 .env.local
+.env.development
+.env.production
 .env.*.local
 *.pem
 *.key

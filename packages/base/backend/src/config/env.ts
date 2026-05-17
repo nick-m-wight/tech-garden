@@ -39,19 +39,16 @@ const envSchema = z
     JWT_ACCESS_EXPIRY: z.coerce.number().int().positive().default(900),
     JWT_REFRESH_EXPIRY: z.coerce.number().int().positive().default(604800),
 
-    // ---- Claude API ----
-    ANTHROPIC_API_KEY: z
-      .string()
-      .min(1, 'ANTHROPIC_API_KEY is required')
-      .regex(/^sk-ant-/, "ANTHROPIC_API_KEY must start with 'sk-ant-'"),
+    // ---- Claude API (garden feature — optional until §16 step 7) ----
+    ANTHROPIC_API_KEY: optionalNonEmpty.pipe(
+      z.string().regex(/^sk-ant-/, "ANTHROPIC_API_KEY must start with 'sk-ant-'").optional(),
+    ),
     ANTHROPIC_MODEL: z.string().min(1).default('claude-sonnet-4-20250514'),
 
-    // ---- Home Assistant (OWASP A10) ----
-    HA_BASE_URL: z.string().url('HA_BASE_URL must be a valid URL'),
-    HA_TOKEN: z.string().min(1, 'HA_TOKEN is required'),
-    HA_WEBHOOK_SECRET: z
-      .string()
-      .min(32, 'HA_WEBHOOK_SECRET must be at least 32 characters (HMAC)'),
+    // ---- Home Assistant (garden feature — optional until §16 step 6, OWASP A10) ----
+    HA_BASE_URL: optionalNonEmpty.pipe(z.string().url('HA_BASE_URL must be a valid URL').optional()),
+    HA_TOKEN: optionalNonEmpty,
+    HA_WEBHOOK_SECRET: optionalNonEmpty,
 
     // ---- Storage (OWASP A02) ----
     DB_PATH: z.string().min(1, 'DB_PATH is required'),

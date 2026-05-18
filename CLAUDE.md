@@ -4,7 +4,7 @@
 > Read this entire file before writing a single line of code.
 > Detailed specs live in `docs/specs/` — links per section below.
 >
-> **Status (2026-05-17):** Steps 1–14 complete. `base-v1.0` tagged. **Next: step 15 — E2E test: speak → transcribe → HA command → response spoken back.**
+> **Status (2026-05-17):** Steps 1–16 complete. `base-v1.0` tagged. All build-order steps done.
 
 ---
 
@@ -233,8 +233,8 @@ Gated by `NODE_ENV === 'development'` in `features.ts`. In prod: return 404, not
 - [x] 12. `docker-compose.dev.yml` + `docker-compose.prod.yml`
 - [x] 13. `infra/remote-access/OPTIONS.md`
 - [x] 14. `.github/workflows/ci-dev.yml`
-- [ ] 15. E2E test: speak → transcribe → HA command → response spoken back
-- [ ] 16. E2E test: button press → photo → Claude Vision → annotation on phone
+- [x] 15. E2E test: speak → transcribe → HA command → response spoken back
+- [x] 16. E2E test: button press → photo → Claude Vision → annotation on phone
 
 ---
 

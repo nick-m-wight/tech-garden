@@ -210,18 +210,11 @@ describe('Flow 1 — voice transcription → HA sensor read → speak', () => {
     const { session, mockSpeak } = makeMockSession();
     await server.onSession(session, 'sess-2', 'user-1');
 
-    // Simulate a partial (non-final) transcription — should be silently skipped
-    const { session: s2 } = makeMockSession();
-    void s2; // unused — use session instead
-    let nonFinalCb: TranscriptionCb | null = null;
-    (session.events.onTranscription as jest.Mock).mock.calls[0]?.[0]; // already captured
-    // Re-trigger via the internal ref: call speak indirectly by forcing non-final
-    const rawCb = (session.events.onTranscription as jest.Mock).mock.calls[0]?.[0] as
+    // Retrieve the handler registered by onSession and fire it with isFinal=false
+    const registeredCb = (session.events.onTranscription as jest.Mock).mock.calls[0]?.[0] as
       | TranscriptionCb
       | undefined;
-    rawCb?.({ isFinal: false, text: 'check mo...' });
-    nonFinalCb = rawCb ?? null;
-    void nonFinalCb;
+    registeredCb?.({ isFinal: false, text: 'check mo...' });
     await flushPromises();
 
     expect(mockSpeak).not.toHaveBeenCalled();

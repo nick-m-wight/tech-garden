@@ -20,6 +20,7 @@ import { defaultLimiter } from '../../../base/backend/src/ratelimit/limiter';
 import { buildRoutes } from '../../../base/backend/src/api/routes';
 import { getGardenDb } from './db/connection';
 import { createAlertRouter } from './glasses/alertWebhook';
+import { createGardenRouter } from './api/gardenRoutes';
 import {
   maybeStartGardenAppServer,
   stopGardenAppServer,
@@ -42,6 +43,7 @@ export function buildGardenApp(): express.Express {
 
   app.use(express.json({ limit: '256kb' }));
   app.use(buildRoutes());
+  app.use('/api/garden', createGardenRouter(db));
 
   app.use((_req: Request, res: Response) => {
     res.status(404).json({ error: 'not found' });

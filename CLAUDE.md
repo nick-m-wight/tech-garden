@@ -4,7 +4,7 @@
 > Read this entire file before writing a single line of code.
 > Detailed specs live in `docs/specs/` — links per section below.
 >
-> **Status (2026-05-17):** §16 steps 1–9 complete. `base-v1.0` tagged. **Next: §16 step 10 — garden mobile (GardenDashboard, PlantAnalysis + AnnotatedImage, PlantHistory).**
+> **Status (2026-05-17):** Steps 1–10 complete. `base-v1.0` tagged. **Next: step 11 — Supabase cloud sync (`cloudSync.ts`, opt-in, RLS, encrypted photo upload).**
 
 ---
 
@@ -217,18 +217,18 @@ Gated by `NODE_ENV === 'development'` in `features.ts`. In prod: return 404, not
 
 ---
 
-## 9. WHAT TO BUILD FIRST (§16 implementation order)
+## 9. WHAT TO BUILD FIRST
 
 - [x] 1. `infra/scripts/generate-secrets.sh`
 - [x] 2. `base/backend` — env, auth, helmet, cors, rate limit, audit logger, healthcheck
 - [x] 3. `base/backend` — MentraOS AppServer base class
 - [x] 4. `base/mobile` — Expo scaffold, secure token store, SQLite + drizzle, auth screens
 - [x] 5. `docs/threat-model.md`
-- [ ] 6. `garden/backend` — HA client (typed, zone model, entity whitelist)
-- [ ] 7. `garden/backend` — Claude Vision plant analysis (system prompt, sensor context, zod validation)
-- [ ] 8. `garden/backend` — photo store (magic bytes, AES-256-GCM, retention cron)
-- [ ] 9. `garden/backend` — garden glasses session (extend base, wire all 3 flows)
-- [ ] 10. `garden/mobile` — GardenDashboard, PlantAnalysis + AnnotatedImage (Skia), PlantHistory
+- [x] 6. `garden/backend` — HA client (typed, zone model, entity whitelist)
+- [x] 7. `garden/backend` — Claude Vision plant analysis (system prompt, sensor context, zod validation)
+- [x] 8. `garden/backend` — photo store (magic bytes, AES-256-GCM, retention cron)
+- [x] 9. `garden/backend` — garden glasses session (extend base, wire all 3 flows)
+- [x] 10. `garden/mobile` — GardenDashboard, PlantAnalysis + AnnotatedImage (Skia), PlantHistory
 - [ ] 11. `base/mobile/src/sync/cloudSync.ts` — Supabase sync (opt-in, RLS, encrypted photo upload)
 - [ ] 12. `docker-compose.dev.yml` + `docker-compose.prod.yml`
 - [ ] 13. `infra/remote-access/OPTIONS.md`

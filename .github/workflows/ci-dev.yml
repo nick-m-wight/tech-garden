@@ -1,2 +1,86 @@
-# Placeholder. Real CI pipeline arrives in CLAUDE.md Section 16 step 14.
-# Authoritative spec lives in CLAUDE.md Section 14.
+name: CI Dev
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+
+jobs:
+  ci:
+    name: Backend CI
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            packages/base/backend/package-lock.json
+            packages/garden/backend/package-lock.json
+
+      # Step 1 — OWASP A08: verify lockfile integrity
+      - name: Install base backend deps
+        working-directory: packages/base/backend
+        run: npm ci
+
+      - name: Install garden backend deps
+        working-directory: packages/garden/backend
+        run: npm ci
+
+      # Step 2 — TypeScript compile check
+      - name: Typecheck base backend
+        working-directory: packages/base/backend
+        run: npm run typecheck
+
+      - name: Typecheck garden backend
+        working-directory: packages/garden/backend
+        run: npm run typecheck
+
+      # Step 3 — OWASP A06: fail on high/critical CVEs
+      - name: Audit base backend
+        working-directory: packages/base/backend
+        run: npm run audit:strict
+
+      - name: Audit garden backend
+        working-directory: packages/garden/backend
+        run: npm run audit:strict
+
+      # Step 4 — Unit tests
+      - name: Test garden backend
+        working-directory: packages/garden/backend
+        run: npm test
+
+      # Step 5 — ESLint with security plugin
+      - name: Lint base backend
+        working-directory: packages/base/backend
+        run: npm run lint
+
+      - name: Lint garden backend
+        working-directory: packages/garden/backend
+        run: npm run lint
+
+      # Step 6 — OWASP A02/A09: no secrets in committed files
+      - name: Secrets scan
+        run: |
+          echo "Scanning for hardcoded secrets..."
+          if grep -rn \
+            --include="*.ts" --include="*.js" --include="*.mjs" \
+            --include="*.json" --include="*.yml" --include="*.yaml" \
+            --exclude-dir=node_modules --exclude-dir=dist \
+            -E 'sk-ant-api[0-9A-Za-z_-]+' .; then
+            echo "::error::Anthropic API key found in committed files"
+            exit 1
+          fi
+          if grep -rn \
+            --include="*.ts" --include="*.js" --include="*.mjs" \
+            --include="*.pem" --include="*.key" \
+            --exclude-dir=node_modules --exclude-dir=dist \
+            -E '\-\-\-\-\-BEGIN (RSA |EC )?PRIVATE KEY\-\-\-\-\-' .; then
+            echo "::error::Private key material found in committed files"
+            exit 1
+          fi
+          echo "Secrets scan passed."

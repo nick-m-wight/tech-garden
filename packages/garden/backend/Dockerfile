@@ -2,20 +2,28 @@
 # Build context: repo root (.)
 # Required because TypeScript compilation includes packages/base/backend/src (rootDir = packages/).
 
-# ---- prod deps (native build tools included for better-sqlite3) ----
+# ---- base backend deps (types needed for cross-package tsc) ----
+FROM node:20-alpine AS base-deps
+RUN apk add --no-cache build-base python3
+WORKDIR /app/packages/base/backend
+COPY packages/base/backend/package.json packages/base/backend/package-lock.json ./
+RUN npm ci
+
+# ---- garden prod deps (native build tools for better-sqlite3) ----
 FROM node:20-alpine AS deps
 RUN apk add --no-cache build-base python3
 WORKDIR /app/packages/garden/backend
 COPY packages/garden/backend/package.json packages/garden/backend/package-lock.json ./
 RUN npm ci --omit=dev
 
-# ---- all deps (devDependencies needed for tsc) ----
+# ---- garden all deps (devDependencies needed for tsc) ----
 FROM deps AS dev-deps
 RUN npm ci
 
 # ---- development ----
 FROM node:20-alpine AS development
 WORKDIR /app
+COPY --from=base-deps /app/packages/base/backend/node_modules packages/base/backend/node_modules
 COPY --from=dev-deps /app/packages/garden/backend/node_modules packages/garden/backend/node_modules
 COPY packages/base/backend/src packages/base/backend/src
 COPY packages/garden/backend packages/garden/backend
@@ -29,6 +37,7 @@ CMD ["sh", "-c", "npm run build && node dist/garden/backend/src/app.js"]
 # ---- build ----
 FROM dev-deps AS build
 WORKDIR /app
+COPY --from=base-deps /app/packages/base/backend/node_modules packages/base/backend/node_modules
 COPY packages/base/backend/src packages/base/backend/src
 COPY packages/garden/backend packages/garden/backend
 WORKDIR /app/packages/garden/backend

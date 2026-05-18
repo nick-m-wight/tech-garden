@@ -1,12 +1,45 @@
 # tech-garden
 
-Smart-glasses home and garden control system. Reusable secure backend template (`packages/base/`) plus a Garden Expert app (`packages/garden/`) built on top. Authoritative spec: [`CLAUDE.md`](CLAUDE.md).
+Smart-glasses home and garden assistant. Speak voice commands to read Home Assistant sensors, press the glasses button to photograph a plant and get an AI diagnosis, and see everything on a phone app.
+
+---
+
+## How the pieces fit together
+
+```
+Your phone  ──────────────►  nginx (port 8080)  ──►  Backend API (port 3000)
+                                                         │
+                                                         ├── SQLite database (local file)
+                                                         └── Plant photo storage (local files)
+
+Mentra Live glasses  ──►  MentraOS Cloud  ──►  ngrok tunnel  ──►  AppServer (port 7010)
+```
+
+**There are four moving parts:**
+
+| Part | What it does | How it runs |
+|---|---|---|
+| **Backend + nginx** | API, database, photo storage | Docker on your PC/Pi |
+| **Phone app** | View plant history, zone map, photos | Expo (React Native) on your phone |
+| **AppServer** | Receives glasses events (voice, button, photo) | Inside Docker, port 7010 |
+| **MentraOS Cloud** | Routes glasses traffic to your AppServer | Mentra's infrastructure — you don't run this |
+
+**Why ngrok?**
+The phone app talks directly to your PC over WiFi — no internet needed. But the glasses connect via MentraOS Cloud, which is on the internet and needs to send HTTP requests *to* your AppServer. Since your PC is behind a home router (no public IP), ngrok creates a tunnel so MentraOS Cloud can reach port 7010. ngrok is only needed for the glasses — remove it and the phone app still works fine.
+
+**The database — do I need Supabase?**
+No. The backend uses SQLite, which is just a file on disk (`data/dev/app-dev.db`). No account, no server, no setup. It works out of the box.
+
+Supabase is an *optional* add-on if you want to sync plant history across multiple devices or access it from the cloud. Leave all `SUPABASE_*` variables blank to skip it entirely.
+
+---
 
 ## Prerequisites
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (backend)
-- Node 20 LTS + npm (mobile)
-- `openssl` and `bash` / git-bash (secret generation, one-time)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- Node 20 LTS + npm
+- [Expo Go](https://expo.dev/go) on your Android or iOS phone
+- [ngrok account](https://ngrok.com) (free) — only needed for glasses
 
 ---
 
@@ -18,79 +51,144 @@ Smart-glasses home and garden control system. Reusable secure backend template (
 ./infra/scripts/generate-secrets.sh
 ```
 
-Creates `.env.dev` and `.env.prod` from `.env.example` (RS256 JWT keypair, app secret, photo encryption key, HA webhook secret). Idempotent — won't overwrite without `--force`.
+Creates `.env.dev` with JWT keys, app secret, and encryption key. Safe to re-run.
 
-### 2. Fill in the values the script can't generate
+### 2. Fill in `.env.dev`
 
-Edit `.env.dev`:
+Open `.env.dev` and set:
 
-| Variable | Where to get it |
-|---|---|
-| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) — use a dev key with a spending cap |
-| `HA_BASE_URL`, `HA_TOKEN` | Your Home Assistant URL + a long-lived access token |
-| `MENTRA_PACKAGE_NAME`, `MENTRA_API_KEY` | [console.mentra.glass](https://console.mentra.glass) — optional; glasses features are disabled without them |
-| `EXPO_PUBLIC_API_BASE_URL` | Your dev machine's LAN IP: `http://192.168.1.XX:8080` (find it with `ipconfig`) |
-| `SUPABASE_*` | Only needed if opting into cloud sync |
+| Variable | What it is | Where to get it |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | Claude Vision API key | [console.anthropic.com](https://console.anthropic.com) — set a spending cap |
+| `HA_BASE_URL` | Home Assistant URL | e.g. `http://homeassistant.local:8123` |
+| `HA_TOKEN` | HA long-lived access token | HA → Profile → Long-lived access tokens |
+| `MENTRA_PACKAGE_NAME` | Your app's package name | [console.mentra.glass](https://console.mentra.glass) |
+| `MENTRA_API_KEY` | Your app's API key | [console.mentra.glass](https://console.mentra.glass) |
 
-### 3. Install mobile deps
+Leave `SUPABASE_*` blank unless you want cloud sync.
+
+### 3. Set the API URL for the phone app
+
+Find your PC's local IP address:
+
+```
+ipconfig   # Windows — look for IPv4 Address under your WiFi adapter
+```
+
+Edit `packages/base/mobile/.env.development`:
+
+```
+EXPO_PUBLIC_API_BASE_URL=http://YOUR_LAN_IP:8080
+```
+
+Example: `http://192.168.1.3:8080`
+
+### 4. Install mobile dependencies
 
 ```bash
 cd packages/base/mobile && npm install
 ```
 
-### 4. Create a user account
+### 5. Build and start Docker
 
 ```bash
-cd packages/garden/backend && npm install && npm run create-user
+docker compose -f docker-compose.dev.yml up --build
 ```
 
-Interactive prompt for email, role, and password. The app won't let you log in without this.
+First run takes ~2 minutes to build the image. Wait until you see:
+
+```
+garden.server.listening  port=3000
+garden.appserver.listening  port=7010
+```
+
+### 6. Create your user account
+
+In a second terminal (keep Docker running):
+
+```bash
+docker compose -f docker-compose.dev.yml exec backend node dist/base/backend/src/scripts/createUser.js
+```
+
+Follow the prompts for email, role (`user`), and password. Use the same email you use for your Mentra account.
+
+### 7. Verify the backend is up
+
+```bash
+curl -UseBasicParsing http://YOUR_LAN_IP:8080/health
+# → {"status":"ok",...}
+```
+
+### 8. Set up ngrok for the glasses
+
+Skip this step if you only want to use the phone app.
+
+```bash
+ngrok http --domain=YOUR_NGROK_DOMAIN 7010
+```
+
+Your ngrok domain is at [dashboard.ngrok.com](https://dashboard.ngrok.com). Keep this terminal open whenever you use the glasses.
+
+In [console.mentra.glass](https://console.mentra.glass) → your app → Server Setup:
+
+- Set **App Server URL** to `https://YOUR_NGROK_DOMAIN` (without `/webhook` — the console adds it automatically)
 
 ---
 
-## Running the app
+## Running the app (every time)
 
-Two terminals:
-
-**Terminal 1 — backend + nginx**
-
+**Terminal 1 — backend:**
 ```bash
 docker compose -f docker-compose.dev.yml up
 ```
 
-First run builds the Docker image (~2 min). Backend on `:3001`, nginx on `:8080`. Re-run after changing source:
+**Terminal 2 — glasses tunnel** (skip if not using glasses):
+```bash
+ngrok http --domain=YOUR_NGROK_DOMAIN 7010
+```
+
+**Terminal 3 — phone app:**
+```bash
+cd packages/base/mobile && npx expo start
+```
+
+Scan the QR code with Expo Go on your phone.
+
+---
+
+## Using the glasses
+
+1. Start all three terminals above
+2. Open the MentraOS app on your phone, find **tech-garden**, and launch it on your glasses
+3. The glasses display will show a green status page when connected
+4. **Voice commands** — speak garden commands (requires Home Assistant configured)
+5. **Photo** — press the glasses button once to photograph a plant; the result appears in the phone app under Plant History
+
+---
+
+## After changing backend code
+
+**Most changes** — just recompile inside the running container (~10 sec):
 
 ```bash
 docker compose -f docker-compose.dev.yml exec backend sh -c "npm run build && pkill node; node dist/garden/backend/src/app.js"
 ```
 
-Or just `docker compose -f docker-compose.dev.yml up --build` to rebuild the image.
-
-**Terminal 2 — mobile**
+**Only use `--build`** when you change `package.json` or the `Dockerfile` (~2 min):
 
 ```bash
-cd packages/base/mobile && npx expo start
-```
-
-Scan the QR code with [Expo Go](https://expo.dev/go) on your phone, or press `a` for an Android emulator.
-
-**Verify the backend is up:**
-
-```bash
-curl http://127.0.0.1:8080/health
-# → { "status": "ok", ... }
+docker compose -f docker-compose.dev.yml up --build
 ```
 
 ---
 
-## Remote access (phone off local WiFi)
+## Production (Raspberry Pi)
 
-No ngrok needed. The backend already binds to `127.0.0.1` only; a tunnel layer sits in front of nginx. See [`infra/remote-access/OPTIONS.md`](infra/remote-access/OPTIONS.md) for setup guides:
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
 
-- **Cloudflare Tunnel** (recommended) — zero port-forwarding, automatic HTTPS, free
-- Tailscale — WireGuard mesh, phone must run the Tailscale app
-- WireGuard self-hosted — requires forwarding one UDP port on your router
-- Local-only — phone must be on the same WiFi as the Pi
+Set up a Cloudflare Tunnel instead of ngrok for both port 80 (phone) and port 7010 (glasses). See `infra/remote-access/OPTIONS.md`.
 
 ---
 
@@ -98,30 +196,21 @@ No ngrok needed. The backend already binds to `127.0.0.1` only; a tunnel layer s
 
 | Path | What's there |
 |---|---|
-| [`CLAUDE.md`](CLAUDE.md) | Source of truth: architecture, security controls, full build spec |
-| `packages/base/` | Reusable secure template — JWT auth, MentraOS AppServer, Expo scaffold |
-| `packages/garden/` | Garden Expert app — HA integration, Claude Vision plant analysis, annotated photo display |
-| `infra/nginx/` | nginx configs for dev (`:8080`) and prod (`:80`) |
-| `infra/remote-access/OPTIONS.md` | Tunnel/VPN options for reaching the backend from outside LAN |
-| `infra/scripts/generate-secrets.sh` | One-shot secret generation |
-| `docs/threat-model.md` | Threat model |
-| `docs/specs/` | Per-feature specs (AI config, HA client, photo storage, mobile UI, etc.) |
-
----
-
-## Production (Raspberry Pi)
-
-```bash
-# On the Pi
-docker compose -f docker-compose.prod.yml up -d
-```
-
-Backend and nginx both bind to `127.0.0.1`; configure a Cloudflare Tunnel or Tailscale in front. See `infra/remote-access/OPTIONS.md`.
+| `CLAUDE.md` | Full architecture spec and security requirements |
+| `packages/base/` | Reusable template — auth, AppServer scaffold, Expo app |
+| `packages/garden/` | Garden app — HA integration, Claude Vision, photo storage |
+| `infra/nginx/` | nginx configs |
+| `infra/remote-access/OPTIONS.md` | Tunnel options (Cloudflare, Tailscale, WireGuard) |
+| `infra/scripts/generate-secrets.sh` | One-time secret generation |
+| `data/dev/` | SQLite database + encrypted photos (gitignored) |
+| `keys/dev/` | JWT keypair (gitignored) |
+| `docs/specs/` | Per-feature specs |
 
 ---
 
 ## Notes
 
-- `.env.dev` / `.env.prod` and `keys/` are `.gitignore`d. Each developer generates their own via `generate-secrets.sh`.
-- `chmod 0600` doesn't enforce on NTFS. The generated key files only get effective restrictive permissions on Linux/macOS (i.e., the Pi in prod).
-- The MentraOS AppServer connects **outbound** to MentraOS cloud — no inbound port required for glasses traffic.
+- `.env.dev`, `.env.prod`, and `keys/` are gitignored — never committed
+- The ngrok free domain is persistent; you don't need to update the Mentra console URL each session
+- Home Assistant is optional — voice commands are silently ignored if not configured
+- Claude Vision is optional — photos save and display without it; analysis is skipped

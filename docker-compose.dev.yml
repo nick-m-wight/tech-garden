@@ -9,7 +9,8 @@ services:
       dockerfile: packages/garden/backend/Dockerfile
       target: development
     ports:
-      - "3001:3001"
+      - "3001:3000"
+      - "7010:7010"
     env_file: .env.dev
     volumes:
       - ./packages/garden/backend/src:/app/packages/garden/backend/src

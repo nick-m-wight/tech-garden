@@ -3,9 +3,11 @@
 The backend binds to `127.0.0.1` only and never listens on a public interface.
 A tunnel or VPN layer sits in front of nginx and forwards traffic to it.
 
-The mobile app reaches the backend over this tunnel. The MentraOS AppServer makes
-an **outbound** WebSocket connection to MentraOS cloud (no inbound port required for
-glasses traffic).
+The mobile app reaches the backend over this tunnel (nginx on port 80/8080).
+
+The MentraOS AppServer listens on port 7010 for **inbound HTTP webhooks** from
+MentraOS Cloud. A separate tunnel must expose port 7010 publicly — MentraOS Cloud
+calls your AppServer when a glasses session starts or stops.
 
 ---
 

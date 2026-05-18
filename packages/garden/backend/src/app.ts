@@ -67,8 +67,11 @@ if (require.main === module) {
   const db = getGardenDb();
   const app = buildGardenApp();
 
-  const server = app.listen(env.PORT, '127.0.0.1', () => {
-    logger.info({ msg: 'garden.server.listening', port: env.PORT, bind: '127.0.0.1' });
+  // Bind to 0.0.0.0 inside Docker so nginx (separate container) can reach us via
+  // the bridge network. External exposure is controlled by docker-compose port
+  // publishing and nginx — not by the bind address here.
+  const server = app.listen(env.PORT, '0.0.0.0', () => {
+    logger.info({ msg: 'garden.server.listening', port: env.PORT, bind: '0.0.0.0' });
   });
 
   maybeStartGardenAppServer(db).catch((err: Error) => {

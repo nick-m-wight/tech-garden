@@ -1,1 +1,2 @@
-export { default } from '../../../../../garden/mobile/src/screens/ZoneMap';
+import ZoneMap from '../../../../../garden/mobile/src/screens/ZoneMap';
+export default ZoneMap;

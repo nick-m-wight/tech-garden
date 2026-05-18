@@ -1,1 +1,2 @@
-export { default } from '../../../../../garden/mobile/src/screens/PlantAnalysis';
+import PlantAnalysis from '../../../../../garden/mobile/src/screens/PlantAnalysis';
+export default PlantAnalysis;

@@ -85,7 +85,8 @@ async function handleVoice(
   activeZoneState: { zoneId: string | null },
 ): Promise<void> {
   if (!haClient) {
-    await session.audio.speak('Home Assistant is not configured.');
+    // Silently skip — speaking here causes a transcription feedback loop since
+    // the glasses pick up their own audio output.
     return;
   }
 
@@ -152,7 +153,7 @@ async function handlePhoto(
   session.layouts.showTextWall('Analysing…');
 
   // Take the photo via SDK (resolves when glasses return the image).
-  const photo = await session.camera.requestPhoto({ size: 'large' });
+  const photo = await session.camera.requestPhoto({ size: 'medium' });
 
   // Find zone context for sensor readings.
   const zones = getZonesByUserId(db, userId);
@@ -174,15 +175,35 @@ async function handlePhoto(
     zoneId: activeZone?.id ?? undefined,
   });
 
-  // Send to Claude Vision.
+  // Send to Claude Vision — gracefully degrade if API key is absent or call fails.
   const imageBase64 = photo.buffer.toString('base64');
-  const analysis = await analysePlant({
-    imageBase64,
-    userId,
-    zoneId: activeZone?.id ?? '',
-    zoneName: activeZone?.name ?? 'Unknown zone',
-    sensors,
-  });
+  let analysis: Awaited<ReturnType<typeof analysePlant>>;
+  let spokenSummary: string;
+  try {
+    analysis = await analysePlant({
+      imageBase64,
+      userId,
+      zoneId: activeZone?.id ?? '',
+      zoneName: activeZone?.name ?? 'Unknown zone',
+      sensors,
+    });
+    spokenSummary = analysis.spokenSummary;
+  } catch (claudeErr) {
+    getLogger().warn({
+      msg: 'garden.photo.claude_skipped',
+      reason: claudeErr instanceof Error ? claudeErr.message : String(claudeErr),
+    });
+    // Stub analysis so the photo still appears in history on the phone.
+    analysis = {
+      spokenSummary: 'Photo saved. Analysis unavailable.',
+      diagnosis: { overallHealth: 'unknown' as never, issues: [] },
+      recommendations: [],
+      annotationPoints: [],
+      trimming: { needed: false, areas: [] },
+      wateringNeeds: { status: 'unknown', recommendation: 'Analysis unavailable.' },
+    };
+    spokenSummary = 'Photo saved.';
+  }
 
   // Persist the analysis and link it to the photo.
   const analysisRecord = saveAnalysis(db, {
@@ -194,8 +215,8 @@ async function handlePhoto(
   linkAnalysisToPhoto(db, photoRecord.photoId, userId, analysisRecord.analysisId);
 
   // Speak the summary through the glasses.
-  await session.audio.speak(analysis.spokenSummary);
-  session.layouts.showTextWall(analysis.spokenSummary.slice(0, 100));
+  await session.audio.speak(spokenSummary);
+  session.layouts.showTextWall(spokenSummary.slice(0, 100));
 
   auditLog({
     action: 'garden.photo.analysis',
@@ -231,25 +252,49 @@ export class GardenAppServer extends GlassesAppServer {
         reason: 'HA_BASE_URL / HA_TOKEN not configured — HA features disabled',
       });
     }
+
+    // MentraOS loads this URL on the glasses display when the app is active.
+    this.getExpressApp().get('/webview', (_req, res) => {
+      const haStatus = this.haClient ? 'connected' : 'not configured';
+      res.setHeader('Content-Type', 'text/html');
+      res.send(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{margin:0;background:#1a2e1a;color:#a8d5a2;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;text-align:center}h1{font-size:1.4rem;margin-bottom:.5rem}p{font-size:.9rem;opacity:.7}</style></head>
+<body><div><h1>🌱 Garden</h1><p>HA: ${haStatus}</p><p>Press the button to analyse a plant.</p></div></body></html>`);
+    });
   }
 
   protected async onSession(
     session: AppSession,
     sessionId: string,
-    userId: string,
+    mentraUserId: string,  // MentraOS sends the user's email as userId
   ): Promise<void> {
+    // Resolve MentraOS email → internal UUID so DB foreign keys match.
+    const userRow = this.db
+      .prepare('SELECT id FROM users WHERE email = ?')
+      .get(mentraUserId.toLowerCase()) as { id: string } | undefined;
+
+    if (!userRow) {
+      getLogger().warn({ msg: 'garden.session.unknown_user', mentraUserId });
+      await session.audio.speak("Your account isn't registered in this garden system.");
+      return;
+    }
+    const userId = userRow.id;
+
     activeSessions.set(userId, session);
     auditLog({
       action: 'garden.session.start',
       userId,
       result: 'success',
-      metadata: { sessionId },
+      metadata: { sessionId, mentraUserId },
     });
 
     const db = this.db;
     const haClient = this.haClient;
     const activeZoneState: { zoneId: string | null } = { zoneId: null };
     let photoInProgress = false;
+    let lastPhotoMs = 0;
+    const PHOTO_COOLDOWN_MS = 5_000;
 
     // Flow 1 — Voice → HA
     const stopTranscription = session.events.onTranscription((data) => {
@@ -276,9 +321,12 @@ export class GardenAppServer extends GlassesAppServer {
     });
 
     // Flow 2 — Button press → photo → Claude Vision
+    // Time-based cooldown guards against the SDK firing two events per physical press.
     const stopButton = session.events.onButtonPress((_data: ButtonPress) => {
-      if (photoInProgress) return; // Debounce concurrent requests.
+      const now = Date.now();
+      if (photoInProgress || now - lastPhotoMs < PHOTO_COOLDOWN_MS) return;
       photoInProgress = true;
+      lastPhotoMs = now;
 
       handlePhoto(session, userId, db, haClient, sessionId, activeZoneState)
         .catch((err: unknown) => {
@@ -313,8 +361,13 @@ export class GardenAppServer extends GlassesAppServer {
     });
   }
 
-  protected async onStop(sessionId: string, userId: string, reason: string): Promise<void> {
-    activeSessions.delete(userId); // idempotent with onDisconnected
+  protected async onStop(sessionId: string, mentraUserId: string, reason: string): Promise<void> {
+    // Resolve email → UUID (best-effort; may already be cleaned up by onDisconnected).
+    const userRow = this.db
+      .prepare('SELECT id FROM users WHERE email = ?')
+      .get(mentraUserId.toLowerCase()) as { id: string } | undefined;
+    const userId = userRow?.id ?? mentraUserId;
+    activeSessions.delete(userId);
     auditLog({
       action: 'garden.session.stop',
       userId,

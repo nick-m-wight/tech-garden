@@ -1,0 +1,14 @@
+.git
+.github
+**/node_modules
+**/dist
+**/.expo
+logs
+data
+keys
+*.env
+.env.*
+*.pem
+*.key
+packages/base/mobile
+packages/garden/mobile

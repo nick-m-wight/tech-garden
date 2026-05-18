@@ -4,7 +4,7 @@
 > Read this entire file before writing a single line of code.
 > Detailed specs live in `docs/specs/` — links per section below.
 >
-> **Status (2026-05-17):** Steps 1–11 complete. `base-v1.0` tagged. **Next: step 12 — Docker Compose (dev + prod).**
+> **Status (2026-05-17):** Steps 1–12 complete. `base-v1.0` tagged. **Next: step 13 — remote access options doc (`infra/remote-access/OPTIONS.md`).**
 
 ---
 
@@ -230,7 +230,7 @@ Gated by `NODE_ENV === 'development'` in `features.ts`. In prod: return 404, not
 - [x] 9. `garden/backend` — garden glasses session (extend base, wire all 3 flows)
 - [x] 10. `garden/mobile` — GardenDashboard, PlantAnalysis + AnnotatedImage (Skia), PlantHistory
 - [x] 11. `base/mobile/src/sync/cloudSync.ts` — Supabase sync (opt-in, RLS, encrypted photo upload)
-- [ ] 12. `docker-compose.dev.yml` + `docker-compose.prod.yml`
+- [x] 12. `docker-compose.dev.yml` + `docker-compose.prod.yml`
 - [ ] 13. `infra/remote-access/OPTIONS.md`
 - [ ] 14. `.github/workflows/ci-dev.yml`
 - [ ] 15. E2E test: speak → transcribe → HA command → response spoken back

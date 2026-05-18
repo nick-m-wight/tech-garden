@@ -1,2 +1,26 @@
-# Placeholder. Real compose definition arrives in CLAUDE.md Section 16 step 12.
-# Authoritative spec lives in CLAUDE.md Section 13.
+# Development — backend + nginx proxy.
+# Backend source mounted so changes are visible without image rebuild;
+# run `docker compose exec backend npm run build` to recompile TypeScript.
+# OWASP A05 — backend runs as non-root user.
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: packages/garden/backend/Dockerfile
+      target: development
+    ports:
+      - "3001:3001"
+    env_file: .env.dev
+    volumes:
+      - ./packages/garden/backend/src:/app/packages/garden/backend/src
+      - ./data/dev:/app/packages/garden/backend/data
+    user: "node"
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./infra/nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend

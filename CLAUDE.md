@@ -4,7 +4,7 @@
 > Read this entire file before writing a single line of code.
 > Detailed specs live in `docs/specs/` — links per section below.
 >
-> **Status (2026-05-17):** §16 steps 1–8 complete. `base-v1.0` tagged. **Next: §16 step 9 — garden glasses session.**
+> **Status (2026-05-17):** §16 steps 1–9 complete. `base-v1.0` tagged. **Next: §16 step 10 — garden mobile (GardenDashboard, PlantAnalysis + AnnotatedImage, PlantHistory).**
 
 ---
 

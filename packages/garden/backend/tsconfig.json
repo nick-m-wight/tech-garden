@@ -21,6 +21,15 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
+    "typeRoots": [
+      "./node_modules/@types",
+      "../../base/backend/node_modules/@types"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "express-serve-static-core": ["./node_modules/@types/express-serve-static-core/index.d.ts"],
+      "express": ["./node_modules/@types/express/index.d.ts"]
+    },
     "resolveJsonModule": true,
     "declaration": true,
     "sourceMap": true

@@ -1,2 +1,376 @@
-// Placeholder. Implementation tracked by CLAUDE.md Section 16.
-export {};
+// Garden glasses session — extends GlassesAppServer with all 3 garden flows.
+//
+// Flow 1: Voice → sanitize → intent parse → HA sensor/actuator → speak.
+// Flow 2: Button → requestPhoto → validate → store → Claude Vision → speak + emit.
+// Flow 3: Active session registry queried by alertWebhook.ts for HA proactive alerts.
+//
+// OWASP A01 — all DB operations scoped to userId via store and HA layer functions.
+// OWASP A03 — voice text sanitized before intent parsing; image validated via magic bytes.
+// OWASP A09 — every flow outcome (success, skip, failure) is audit-logged.
+
+import type { AppSession, ButtonPress } from '@mentra/sdk';
+import type { Database } from 'better-sqlite3';
+import {
+  GlassesAppServer,
+  type GlassesAppServerOptions,
+} from '../../../../base/backend/src/glasses/session';
+import { loadEnv } from '../../../../base/backend/src/config/env';
+import { auditLog, getLogger } from '../../../../base/backend/src/audit/logger';
+import { sanitizeUserText } from '../../../../base/backend/src/security/sanitize';
+import { HAClient } from '../homeAssistant/client';
+import { getZonesByUserId, type GardenZone } from '../homeAssistant/zones';
+import { readSensor } from '../homeAssistant/sensors';
+import { executeCommand } from '../homeAssistant/actuators';
+import { savePhoto } from '../storage/photoStore';
+import { saveAnalysis } from '../storage/plantHistory';
+import { linkAnalysisToPhoto } from '../storage/photoStore';
+import { analysePlant } from '../ai/plantAnalysis';
+import type { SensorReadings } from '../ai/gardenExpert';
+import {
+  parseGardenIntent,
+  findZone,
+  getSensorEntityId,
+  getActuatorEntityId,
+  formatSensorResponse,
+  formatActuatorResponse,
+  type SensorKey,
+} from './intentParser';
+
+// ---- Active session registry (Flow 3) ----
+
+const activeSessions = new Map<string, AppSession>();
+
+// ---- Sensor gathering helper ----
+
+type NumericSensorKey = 'soilMoisture' | 'temperature' | 'humidity' | 'lightLevel' | 'pH';
+
+const SENSOR_PAIRS: Array<[keyof GardenZone['sensors'], NumericSensorKey]> = [
+  ['soilMoisture', 'soilMoisture'],
+  ['temperature',  'temperature'],
+  ['humidity',     'humidity'],
+  ['lightLevel',   'lightLevel'],
+  ['pH',           'pH'],
+];
+
+async function gatherZoneSensors(
+  haClient: HAClient,
+  db: Database,
+  zone: GardenZone,
+  userId: string,
+): Promise<SensorReadings> {
+  const readings: SensorReadings = {};
+  for (const [zoneField, readingKey] of SENSOR_PAIRS) {
+    const entityId = zone.sensors[zoneField];
+    if (!entityId) continue;
+    try {
+      const r = await readSensor(haClient, db, entityId, userId, zone.id);
+      const num = parseFloat(r.value);
+      if (!isNaN(num)) readings[readingKey] = num;
+    } catch {
+      // Sensor unavailable — continue without it.
+    }
+  }
+  return readings;
+}
+
+// ---- Flow handlers ----
+
+async function handleVoice(
+  session: AppSession,
+  text: string,
+  userId: string,
+  db: Database,
+  haClient: HAClient | undefined,
+  sessionId: string,
+  activeZoneState: { zoneId: string | null },
+): Promise<void> {
+  if (!haClient) {
+    await session.audio.speak('Home Assistant is not configured.');
+    return;
+  }
+
+  const zones = getZonesByUserId(db, userId);
+  const intent = parseGardenIntent(text);
+
+  if (!intent) {
+    auditLog({
+      action: 'garden.voice.unrecognised',
+      userId,
+      result: 'failure',
+      metadata: { sessionId, length: text.length },
+    });
+    await session.audio.speak("Sorry, I didn't understand that garden command.");
+    return;
+  }
+
+  const zone = findZone(zones, intent.zoneQuery);
+  if (!zone) {
+    await session.audio.speak(`I don't have a zone matching "${intent.zoneQuery}".`);
+    return;
+  }
+
+  // Track the last-mentioned zone for photo context (Flow 2).
+  activeZoneState.zoneId = zone.id;
+
+  if (intent.action === 'sensor_read') {
+    const entityId = getSensorEntityId(zone, intent.sensorKey as SensorKey);
+    if (!entityId) {
+      await session.audio.speak(
+        `Zone ${zone.name} doesn't have a ${intent.sensorKey} sensor configured.`,
+      );
+      return;
+    }
+    const reading = await readSensor(haClient, db, entityId, userId, zone.id);
+    const reply = formatSensorResponse(intent.sensorKey as SensorKey, reading.value, reading.unit, zone.name);
+    await session.audio.speak(reply);
+    session.layouts.showTextWall(reply);
+    return;
+  }
+
+  // actuator command
+  const entityId = getActuatorEntityId(zone, intent.command);
+  if (!entityId) {
+    await session.audio.speak(
+      `Zone ${zone.name} doesn't have an actuator for that command.`,
+    );
+    return;
+  }
+  await executeCommand(haClient, db, intent.command, entityId, userId, zone.id);
+  const reply = formatActuatorResponse(intent.command, zone.name);
+  await session.audio.speak(reply);
+  session.layouts.showTextWall(reply);
+}
+
+async function handlePhoto(
+  session: AppSession,
+  userId: string,
+  db: Database,
+  haClient: HAClient | undefined,
+  sessionId: string,
+  activeZoneState: { zoneId: string | null },
+): Promise<void> {
+  session.layouts.showTextWall('Analysing…');
+
+  // Take the photo via SDK (resolves when glasses return the image).
+  const photo = await session.camera.requestPhoto({ size: 'large' });
+
+  // Find zone context for sensor readings.
+  const zones = getZonesByUserId(db, userId);
+  const activeZone =
+    (activeZoneState.zoneId
+      ? zones.find((z) => z.id === activeZoneState.zoneId)
+      : undefined) ?? zones[0] ?? null;
+
+  // Gather live sensor readings for analysis context (best-effort).
+  const sensors: SensorReadings =
+    haClient && activeZone
+      ? await gatherZoneSensors(haClient, db, activeZone, userId)
+      : {};
+
+  // Encrypt and store the photo (OWASP A02, A03).
+  const photoRecord = savePhoto(db, {
+    imageBuffer: photo.buffer,
+    userId,
+    zoneId: activeZone?.id ?? undefined,
+  });
+
+  // Send to Claude Vision.
+  const imageBase64 = photo.buffer.toString('base64');
+  const analysis = await analysePlant({
+    imageBase64,
+    userId,
+    zoneId: activeZone?.id ?? '',
+    zoneName: activeZone?.name ?? 'Unknown zone',
+    sensors,
+  });
+
+  // Persist the analysis and link it to the photo.
+  const analysisRecord = saveAnalysis(db, {
+    photoId: photoRecord.photoId,
+    userId,
+    analysis,
+    rawResponse: JSON.stringify(analysis),
+  });
+  linkAnalysisToPhoto(db, photoRecord.photoId, userId, analysisRecord.analysisId);
+
+  // Speak the summary through the glasses.
+  await session.audio.speak(analysis.spokenSummary);
+  session.layouts.showTextWall(analysis.spokenSummary.slice(0, 100));
+
+  auditLog({
+    action: 'garden.photo.analysis',
+    userId,
+    result: 'success',
+    metadata: {
+      sessionId,
+      photoId: photoRecord.photoId,
+      analysisId: analysisRecord.analysisId,
+      overallHealth: analysis.diagnosis.overallHealth,
+    },
+  });
+}
+
+// ---- GardenAppServer ----
+
+export interface GardenAppServerOptions extends GlassesAppServerOptions {
+  db: Database;
+}
+
+export class GardenAppServer extends GlassesAppServer {
+  private readonly db: Database;
+  private readonly haClient: HAClient | undefined;
+
+  constructor(opts: GardenAppServerOptions) {
+    super(opts);
+    this.db = opts.db;
+    try {
+      this.haClient = new HAClient();
+    } catch {
+      getLogger().info({
+        msg: 'garden.ha.client.skipped',
+        reason: 'HA_BASE_URL / HA_TOKEN not configured — HA features disabled',
+      });
+    }
+  }
+
+  protected async onSession(
+    session: AppSession,
+    sessionId: string,
+    userId: string,
+  ): Promise<void> {
+    activeSessions.set(userId, session);
+    auditLog({
+      action: 'garden.session.start',
+      userId,
+      result: 'success',
+      metadata: { sessionId },
+    });
+
+    const db = this.db;
+    const haClient = this.haClient;
+    const activeZoneState: { zoneId: string | null } = { zoneId: null };
+    let photoInProgress = false;
+
+    // Flow 1 — Voice → HA
+    const stopTranscription = session.events.onTranscription((data) => {
+      if (!data.isFinal) return;
+      const text = sanitizeUserText(data.text); // OWASP A03
+      if (!text) return;
+
+      handleVoice(session, text, userId, db, haClient, sessionId, activeZoneState).catch(
+        (err: unknown) => {
+          auditLog({
+            action: 'garden.voice.error',
+            userId,
+            result: 'failure',
+            metadata: {
+              sessionId,
+              reason: err instanceof Error ? err.message : String(err),
+            },
+          });
+          void session.audio.speak('Sorry, there was a problem with that command.').catch(
+            () => { /* glasses may have disconnected */ },
+          );
+        },
+      );
+    });
+
+    // Flow 2 — Button press → photo → Claude Vision
+    const stopButton = session.events.onButtonPress((_data: ButtonPress) => {
+      if (photoInProgress) return; // Debounce concurrent requests.
+      photoInProgress = true;
+
+      handlePhoto(session, userId, db, haClient, sessionId, activeZoneState)
+        .catch((err: unknown) => {
+          auditLog({
+            action: 'garden.photo.error',
+            userId,
+            result: 'failure',
+            metadata: {
+              sessionId,
+              reason: err instanceof Error ? err.message : String(err),
+            },
+          });
+          void session.audio.speak('Sorry, I had a problem with the photo analysis.').catch(
+            () => { /* glasses may have disconnected */ },
+          );
+        })
+        .finally(() => {
+          photoInProgress = false;
+        });
+    });
+
+    session.events.onDisconnected(() => {
+      activeSessions.delete(userId);
+      stopTranscription();
+      stopButton();
+      auditLog({
+        action: 'garden.session.end',
+        userId,
+        result: 'success',
+        metadata: { sessionId },
+      });
+    });
+  }
+
+  protected async onStop(sessionId: string, userId: string, reason: string): Promise<void> {
+    activeSessions.delete(userId); // idempotent with onDisconnected
+    auditLog({
+      action: 'garden.session.stop',
+      userId,
+      result: 'denied',
+      metadata: { sessionId, reason },
+    });
+  }
+
+  // Called by alertWebhook.ts to speak a proactive HA alert (Flow 3). // OWASP A09
+  static async speakAlert(userId: string, text: string): Promise<boolean> {
+    const session = activeSessions.get(userId);
+    if (!session) return false;
+    await session.audio.speak(text);
+    return true;
+  }
+
+  static hasActiveSession(userId: string): boolean {
+    return activeSessions.has(userId);
+  }
+}
+
+// ---- Lifecycle helpers ----
+
+let gardenServer: GardenAppServer | undefined;
+
+export async function maybeStartGardenAppServer(
+  db: Database,
+): Promise<GardenAppServer | undefined> {
+  const env = loadEnv();
+  if (!env.MENTRA_PACKAGE_NAME || !env.MENTRA_API_KEY) {
+    getLogger().info({
+      msg: 'garden.appserver.skipped',
+      reason: 'MENTRA_PACKAGE_NAME/MENTRA_API_KEY blank — set both to enable',
+    });
+    return undefined;
+  }
+  gardenServer = new GardenAppServer({
+    packageName: env.MENTRA_PACKAGE_NAME,
+    apiKey: env.MENTRA_API_KEY,
+    port: env.MENTRA_PORT,
+    db,
+  });
+  await gardenServer.start();
+  getLogger().info({
+    msg: 'garden.appserver.listening',
+    packageName: env.MENTRA_PACKAGE_NAME,
+    port: env.MENTRA_PORT,
+  });
+  return gardenServer;
+}
+
+export async function stopGardenAppServer(): Promise<void> {
+  if (!gardenServer) return;
+  try {
+    await gardenServer.stop();
+  } finally {
+    gardenServer = undefined;
+  }
+}

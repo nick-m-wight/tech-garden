@@ -1,5 +1,7 @@
 import {
   parseGardenIntent,
+  parseRepeatIntent,
+  stripWakeWord,
   extractZoneQuery,
   findZone,
   getSensorEntityId,
@@ -41,6 +43,73 @@ const ZONES: GardenZone[] = [
   makeZone({ id: 'zone-uuid-3', name: 'Zone 3', sensors: { soilMoisture: undefined, temperature: undefined, humidity: undefined, lightLevel: undefined, pH: undefined, npk: undefined, rain: undefined }, actuators: { waterValve: undefined, growLight: undefined, fan: undefined, heater: undefined } }),
 ];
 
+// ---- stripWakeWord ----
+
+describe('stripWakeWord', () => {
+  it('matches "hey garden" and strips the prefix', () => {
+    expect(stripWakeWord('hey garden check moisture in zone 1')).toBe('check moisture in zone 1');
+  });
+
+  it('matches "ok garden" with a comma', () => {
+    expect(stripWakeWord('ok garden, check moisture in zone 1')).toBe('check moisture in zone 1');
+  });
+
+  it('matches "okay garden"', () => {
+    expect(stripWakeWord('okay garden turn on water in zone 2')).toBe('turn on water in zone 2');
+  });
+
+  it('matches "hi garden"', () => {
+    expect(stripWakeWord('hi garden whats the temp in zone 3')).toBe('whats the temp in zone 3');
+  });
+
+  it('matches bare "garden" at the start', () => {
+    expect(stripWakeWord('garden, check moisture in zone 1')).toBe('check moisture in zone 1');
+  });
+
+  it('is case-insensitive', () => {
+    expect(stripWakeWord('Hey Garden check moisture in zone 1')).toBe('check moisture in zone 1');
+  });
+
+  it('returns null when wake word is missing', () => {
+    expect(stripWakeWord('check moisture in zone 1')).toBeNull();
+  });
+
+  it("returns null when 'garden' appears mid-sentence", () => {
+    // Sensor responses must not re-trigger via wake-word match.
+    expect(stripWakeWord("Sorry, I didn't understand that garden command")).toBeNull();
+  });
+
+  it("doesn't match 'gardener' or 'gardens'", () => {
+    expect(stripWakeWord('hey gardener check moisture')).toBeNull();
+    expect(stripWakeWord('hey gardens check moisture')).toBeNull();
+  });
+
+  it('returns empty string when wake word is the entire utterance', () => {
+    expect(stripWakeWord('hey garden')).toBe('');
+    expect(stripWakeWord('garden')).toBe('');
+  });
+});
+
+// ---- parseRepeatIntent ----
+
+describe('parseRepeatIntent', () => {
+  it('detects "repeat that"', () => {
+    expect(parseRepeatIntent('repeat that')).toBe(true);
+  });
+
+  it('detects "say that again"', () => {
+    expect(parseRepeatIntent('say that again')).toBe(true);
+  });
+
+  it('detects "again"', () => {
+    expect(parseRepeatIntent('again')).toBe(true);
+  });
+
+  it('returns false for unrelated commands', () => {
+    expect(parseRepeatIntent('check moisture in zone 1')).toBe(false);
+  });
+});
+
 // ---- extractZoneQuery ----
 
 describe('extractZoneQuery', () => {
@@ -58,6 +127,11 @@ describe('extractZoneQuery', () => {
 
   it('returns null when no zone mentioned', () => {
     expect(extractZoneQuery('what is the temperature')).toBeNull();
+  });
+
+  it('handles terminal punctuation added by speech-to-text', () => {
+    expect(extractZoneQuery('check moisture in zone 1.')).toBe('1');
+    expect(extractZoneQuery('check moisture in zone 1!')).toBe('1');
   });
 
   it('handles "for zone" phrasing', () => {

@@ -6,6 +6,21 @@
 import type { GardenZone } from '../homeAssistant/zones';
 import type { PermittedCommand } from '../homeAssistant/actuators';
 
+// ---- Wake word ----
+//
+// Transcription fires on any speech, including the glasses' own spoken output
+// (mic picks up speaker → infinite feedback loop). Requiring a wake word
+// silences every utterance that wasn't explicitly addressed to the system.
+// Accepted forms (case-insensitive): "hey garden", "ok garden", "okay garden",
+// "hi garden", or bare "garden" at the start of the utterance.
+const WAKE_WORD_RE = /^\s*(?:(?:hey|ok|okay|hi)[\s,]+)?garden\b[\s,!.?:]*/i;
+
+export function stripWakeWord(text: string): string | null {
+  const m = WAKE_WORD_RE.exec(text);
+  if (!m) return null;
+  return text.slice(m[0].length).trim();
+}
+
 // ---- Sensor keys ----
 
 export type SensorKey = 'soilMoisture' | 'temperature' | 'humidity' | 'lightLevel' | 'pH';
@@ -81,8 +96,10 @@ const SPOKEN_DIGITS: Record<string, string> = {
 };
 
 export function extractZoneQuery(text: string): string | null {
+  // Speech-to-text commonly appends terminal punctuation — strip it before matching.
+  const t = text.replace(/[.,!?;:]+\s*$/, '').trim();
   for (const re of ZONE_RES) {
-    const m = re.exec(text);
+    const m = re.exec(t);
     if (m?.[1]) {
       const raw = m[1].trim().toLowerCase();
       return SPOKEN_DIGITS[raw] ?? raw;
@@ -91,28 +108,35 @@ export function extractZoneQuery(text: string): string | null {
   return null;
 }
 
+// ---- Repeat detection ----
+
+const REPEAT_RE = /\b(?:repeat\s+that|say\s+that\s+again|what\s+(?:did\s+you\s+)?say|again)\b/i;
+
+export function parseRepeatIntent(text: string): boolean {
+  return REPEAT_RE.test(text);
+}
+
 // ---- Intent types ----
 
 export type ParsedIntent =
+  | { action: 'repeat' }
   | { action: 'sensor_read'; sensorKey: SensorKey; zoneQuery: string }
   | { action: 'actuator'; command: PermittedCommand; zoneQuery: string };
 
-const SENSOR_READ_RE =
-  /\b(?:check|read|what(?:'?s)?(?:\s+the)?|how(?:'?s)?(?:\s+(?:the|is))?|tell\s+me|show\s+me|what\s+is|how\s+is)\b/i;
-
 export function parseGardenIntent(text: string): ParsedIntent | null {
+  if (parseRepeatIntent(text)) return { action: 'repeat' };
+
   const zoneQuery = extractZoneQuery(text);
   if (!zoneQuery) return null;
 
-  // Actuator commands are more specific — try first.
+  // Actuator commands are more specific (require explicit on/off) — try first.
   const command = detectActuatorCommand(text);
   if (command) return { action: 'actuator', command, zoneQuery };
 
-  // Sensor read: requires a read verb + a recognisable sensor word.
-  if (SENSOR_READ_RE.test(text)) {
-    const sensorKey = detectSensorKey(text);
-    if (sensorKey) return { action: 'sensor_read', sensorKey, zoneQuery };
-  }
+  // Sensor read: any sensor word + zone is enough. The wake word already
+  // proves intent, so we don't require a separate read verb like "check".
+  const sensorKey = detectSensorKey(text);
+  if (sensorKey) return { action: 'sensor_read', sensorKey, zoneQuery };
 
   return null;
 }

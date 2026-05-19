@@ -25,9 +25,11 @@ import { savePhoto } from '../storage/photoStore';
 import { saveAnalysis } from '../storage/plantHistory';
 import { linkAnalysisToPhoto } from '../storage/photoStore';
 import { analysePlant } from '../ai/plantAnalysis';
+import { askFollowUp } from '../ai/followUp';
 import type { SensorReadings } from '../ai/gardenExpert';
 import {
   parseGardenIntent,
+  stripWakeWord,
   findZone,
   getSensorEntityId,
   getActuatorEntityId,
@@ -35,6 +37,19 @@ import {
   formatActuatorResponse,
   type SensorKey,
 } from './intentParser';
+
+// ---- Conversation state ----
+
+interface ConversationState {
+  lastSpokenResponse: string | null;
+  followUpContext: {
+    analysisText: string;
+    zoneName: string;
+    expiresAt: number;
+  } | null;
+}
+
+const FOLLOW_UP_TTL_MS = 5 * 60 * 1000;
 
 // ---- Active session registry (Flow 3) ----
 
@@ -83,27 +98,72 @@ async function handleVoice(
   haClient: HAClient | undefined,
   sessionId: string,
   activeZoneState: { zoneId: string | null },
+  conversationState: ConversationState,
 ): Promise<void> {
-  if (!haClient) {
-    // Silently skip — speaking here causes a transcription feedback loop since
-    // the glasses pick up their own audio output.
+  // Wake word gate — silently ignore any transcription not addressed to the
+  // system. Without this, the glasses mic re-transcribes the speaker output
+  // and loops on "didn't understand" responses.
+  const command = stripWakeWord(text);
+  if (command === null) return;
+
+  // Dev-only: log the raw command so transcription issues are visible in docker logs.
+  if (process.env['NODE_ENV'] === 'development') {
+    getLogger().info({ msg: 'garden.voice.command', command, userId, sessionId });
+  }
+
+  if (command === '') {
+    // Wake word only — user is addressing the system but hasn't said a command yet.
+    session.layouts.showTextWall('Try: check moisture in zone 1.');
     return;
   }
 
-  const zones = getZonesByUserId(db, userId);
-  const intent = parseGardenIntent(text);
+  if (!haClient) {
+    await session.audio.speak('Home Assistant is not configured. Please set HA_BASE_URL and HA_TOKEN.');
+    return;
+  }
+
+  const intent = parseGardenIntent(command);
+
+  // Repeat last response — no zone needed.
+  if (intent?.action === 'repeat') {
+    const last = conversationState.lastSpokenResponse;
+    if (last) {
+      await session.audio.speak(last);
+    } else {
+      await session.audio.speak("I haven't said anything yet.");
+    }
+    return;
+  }
 
   if (!intent) {
+    // Follow-up question: if recent photo analysis context is available, send to Claude.
+    const ctx = conversationState.followUpContext;
+    if (ctx && Date.now() < ctx.expiresAt) {
+      const reply = await askFollowUp({
+        question: command,
+        previousAnalysis: ctx.analysisText,
+        zoneName: ctx.zoneName,
+        userId,
+      });
+      conversationState.lastSpokenResponse = reply;
+      await session.audio.speak(reply);
+      session.layouts.showTextWall(reply.slice(0, 100));
+      return;
+    }
+
     auditLog({
       action: 'garden.voice.unrecognised',
       userId,
       result: 'failure',
-      metadata: { sessionId, length: text.length },
+      metadata: { sessionId, length: command.length },
     });
-    await session.audio.speak("Sorry, I didn't understand that garden command.");
+    const hint = "Didn't catch that. Try: check moisture in zone 1.";
+    await session.audio.speak(hint);
+    session.layouts.showTextWall(hint);
     return;
   }
 
+  const zones = getZonesByUserId(db, userId);
   const zone = findZone(zones, intent.zoneQuery);
   if (!zone) {
     await session.audio.speak(`I don't have a zone matching "${intent.zoneQuery}".`);
@@ -123,6 +183,7 @@ async function handleVoice(
     }
     const reading = await readSensor(haClient, db, entityId, userId, zone.id);
     const reply = formatSensorResponse(intent.sensorKey as SensorKey, reading.value, reading.unit, zone.name);
+    conversationState.lastSpokenResponse = reply;
     await session.audio.speak(reply);
     session.layouts.showTextWall(reply);
     return;
@@ -138,6 +199,7 @@ async function handleVoice(
   }
   await executeCommand(haClient, db, intent.command, entityId, userId, zone.id);
   const reply = formatActuatorResponse(intent.command, zone.name);
+  conversationState.lastSpokenResponse = reply;
   await session.audio.speak(reply);
   session.layouts.showTextWall(reply);
 }
@@ -149,11 +211,14 @@ async function handlePhoto(
   haClient: HAClient | undefined,
   sessionId: string,
   activeZoneState: { zoneId: string | null },
+  conversationState: ConversationState,
 ): Promise<void> {
-  session.layouts.showTextWall('Analysing…');
+  // Fire-and-forget: audio cue plays while photo is captured concurrently.
+  void session.audio.speak('Taking a photo, please hold still.').catch(() => {});
 
   // Take the photo via SDK (resolves when glasses return the image).
   const photo = await session.camera.requestPhoto({ size: 'medium' });
+  void session.audio.speak('Analysing your plant. One moment.').catch(() => {});
 
   // Find zone context for sensor readings.
   const zones = getZonesByUserId(db, userId);
@@ -188,6 +253,12 @@ async function handlePhoto(
       sensors,
     });
     spokenSummary = analysis.spokenSummary;
+    // Open a 5-minute follow-up window so the user can ask questions about this analysis.
+    conversationState.followUpContext = {
+      analysisText: spokenSummary,
+      zoneName: activeZone?.name ?? 'Unknown zone',
+      expiresAt: Date.now() + FOLLOW_UP_TTL_MS,
+    };
   } catch (claudeErr) {
     getLogger().warn({
       msg: 'garden.photo.claude_skipped',
@@ -215,6 +286,7 @@ async function handlePhoto(
   linkAnalysisToPhoto(db, photoRecord.photoId, userId, analysisRecord.analysisId);
 
   // Speak the summary through the glasses.
+  conversationState.lastSpokenResponse = spokenSummary;
   await session.audio.speak(spokenSummary);
   session.layouts.showTextWall(spokenSummary.slice(0, 100));
 
@@ -292,6 +364,7 @@ export class GardenAppServer extends GlassesAppServer {
     const db = this.db;
     const haClient = this.haClient;
     const activeZoneState: { zoneId: string | null } = { zoneId: null };
+    const conversationState: ConversationState = { lastSpokenResponse: null, followUpContext: null };
     let photoInProgress = false;
     let lastPhotoMs = 0;
     const PHOTO_COOLDOWN_MS = 5_000;
@@ -302,7 +375,7 @@ export class GardenAppServer extends GlassesAppServer {
       const text = sanitizeUserText(data.text); // OWASP A03
       if (!text) return;
 
-      handleVoice(session, text, userId, db, haClient, sessionId, activeZoneState).catch(
+      handleVoice(session, text, userId, db, haClient, sessionId, activeZoneState, conversationState).catch(
         (err: unknown) => {
           auditLog({
             action: 'garden.voice.error',
@@ -328,7 +401,7 @@ export class GardenAppServer extends GlassesAppServer {
       photoInProgress = true;
       lastPhotoMs = now;
 
-      handlePhoto(session, userId, db, haClient, sessionId, activeZoneState)
+      handlePhoto(session, userId, db, haClient, sessionId, activeZoneState, conversationState)
         .catch((err: unknown) => {
           auditLog({
             action: 'garden.photo.error',

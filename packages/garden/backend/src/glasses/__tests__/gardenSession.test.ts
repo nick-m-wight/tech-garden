@@ -16,6 +16,7 @@ import { readSensor } from '../../homeAssistant/sensors';
 import { savePhoto, linkAnalysisToPhoto } from '../../storage/photoStore';
 import { saveAnalysis } from '../../storage/plantHistory';
 import { analysePlant } from '../../ai/plantAnalysis';
+import { askFollowUp } from '../../ai/followUp';
 
 // ---- Module mocks --------------------------------------------------------
 
@@ -24,6 +25,7 @@ jest.mock('../../../../../base/backend/src/glasses/session', () => {
     constructor(_opts: unknown) {}
     async start(): Promise<void> {}
     async stop(): Promise<void> {}
+    getExpressApp() { return { get: jest.fn() }; }
   }
   return { GlassesAppServer };
 });
@@ -58,6 +60,7 @@ jest.mock('../../storage/photoStore', () => ({
 }));
 jest.mock('../../storage/plantHistory', () => ({ saveAnalysis: jest.fn() }));
 jest.mock('../../ai/plantAnalysis', () => ({ analysePlant: jest.fn() }));
+jest.mock('../../ai/followUp', () => ({ askFollowUp: jest.fn() }));
 
 // ---- Helpers -------------------------------------------------------------
 
@@ -154,6 +157,15 @@ class TestableGardenAppServer extends GardenAppServer {
 
 function makeServer(): TestableGardenAppServer {
   const db = new BetterSqlite3(':memory:');
+  db.exec(`
+    CREATE TABLE users (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO users (id, email) VALUES ('user-1', 'user-1');
+  `);
   const opts: GardenAppServerOptions = {
     db,
     packageName: 'test-pkg',
@@ -169,6 +181,7 @@ const mockSavePhoto        = savePhoto        as jest.Mock;
 const mockSaveAnalysis     = saveAnalysis     as jest.Mock;
 const mockLinkAnalysis     = linkAnalysisToPhoto as jest.Mock;
 const mockAnalysePlant     = jest.mocked(analysePlant);
+const mockAskFollowUp      = jest.mocked(askFollowUp);
 
 // ---- Flow 1 — voice → HA sensor read → speak (step 15) ------------------
 
@@ -190,7 +203,7 @@ describe('Flow 1 — voice transcription → HA sensor read → speak', () => {
     const { session, triggerTranscription, mockSpeak, mockShowTextWall } = makeMockSession();
     await server.onSession(session, 'sess-1', 'user-1');
 
-    triggerTranscription('check moisture in zone 1');
+    triggerTranscription('hey garden check moisture in zone 1');
     await flushPromises();
 
     // OWASP A09 — intent executed and result spoken
@@ -203,6 +216,18 @@ describe('Flow 1 — voice transcription → HA sensor read → speak', () => {
       'user-1',
       'zone-1',
     );
+  });
+
+  it('silently ignores transcription without the wake word', async () => {
+    const server = makeServer();
+    const { session, triggerTranscription, mockSpeak, mockShowTextWall } = makeMockSession();
+    await server.onSession(session, 'sess-wake-1', 'user-1');
+
+    triggerTranscription('check moisture in zone 1'); // no wake word
+    await flushPromises();
+
+    expect(mockSpeak).not.toHaveBeenCalled();
+    expect(mockShowTextWall).not.toHaveBeenCalled();
   });
 
   it('ignores non-final transcription events', async () => {
@@ -220,6 +245,74 @@ describe('Flow 1 — voice transcription → HA sensor read → speak', () => {
     expect(mockSpeak).not.toHaveBeenCalled();
   });
 
+  it('repeats the last spoken response when "repeat that" is said', async () => {
+    mockReadSensor.mockResolvedValue({
+      entityId: 'sensor.zone1_moisture',
+      value: '42',
+      unit: '%',
+      recordedAt: new Date(),
+    });
+
+    const server = makeServer();
+    const { session, triggerTranscription, mockSpeak } = makeMockSession();
+    await server.onSession(session, 'sess-repeat-1', 'user-1');
+
+    // First get a real response to populate lastSpokenResponse.
+    triggerTranscription('hey garden check moisture in zone 1');
+    await flushPromises();
+
+    mockSpeak.mockClear();
+    triggerTranscription('hey garden repeat that');
+    await flushPromises();
+
+    expect(mockSpeak).toHaveBeenCalledWith(expect.stringContaining('42'));
+  });
+
+  it('says "haven\'t said anything yet" when repeat is used before any response', async () => {
+    const server = makeServer();
+    const { session, triggerTranscription, mockSpeak } = makeMockSession();
+    await server.onSession(session, 'sess-repeat-2', 'user-1');
+
+    triggerTranscription('hey garden repeat that');
+    await flushPromises();
+
+    expect(mockSpeak).toHaveBeenCalledWith(expect.stringContaining("haven't said anything"));
+  });
+
+  it('routes unrecognised command to follow-up when photo context is active', async () => {
+    mockAskFollowUp.mockResolvedValue('Apply a sulfur-based fungicide spray.');
+
+    const server = makeServer();
+    const { session, triggerTranscription, triggerButtonPress, mockSpeak, mockRequestPhoto } =
+      makeMockSession();
+    mockRequestPhoto.mockResolvedValue({ buffer: makeJpegBuffer() });
+    mockSavePhoto.mockReturnValue({ photoId: 'photo-fu' });
+    mockSaveAnalysis.mockReturnValue({ analysisId: 'analysis-fu' });
+    mockLinkAnalysis.mockReturnValue(undefined);
+    mockAnalysePlant.mockResolvedValue({
+      spokenSummary: 'Early signs of mildew on upper leaves.',
+      diagnosis: { overallHealth: 'fair', issues: [] },
+      recommendations: [],
+      annotationPoints: [],
+      trimming: { needed: false, areas: [] },
+      wateringNeeds: { status: 'optimal', recommendation: 'Fine.' },
+    });
+    await server.onSession(session, 'sess-followup-1', 'user-1');
+
+    // Take a photo to open the follow-up window.
+    triggerButtonPress();
+    await flushPromises();
+
+    mockSpeak.mockClear();
+    triggerTranscription('hey garden what fungicide should I use?');
+    await flushPromises();
+
+    expect(mockAskFollowUp).toHaveBeenCalledWith(
+      expect.objectContaining({ question: expect.stringContaining('fungicide') }),
+    );
+    expect(mockSpeak).toHaveBeenCalledWith('Apply a sulfur-based fungicide spray.');
+  });
+
   it('speaks a fallback when HA is not configured', async () => {
     // Make HAClient constructor throw so haClient stays undefined in the server
     const { HAClient } = jest.requireMock('../../homeAssistant/client') as {
@@ -231,7 +324,7 @@ describe('Flow 1 — voice transcription → HA sensor read → speak', () => {
     const { session, triggerTranscription, mockSpeak } = makeMockSession();
     await server.onSession(session, 'sess-3', 'user-1');
 
-    triggerTranscription('check moisture in zone 1');
+    triggerTranscription('hey garden check moisture in zone 1');
     await flushPromises();
 
     expect(mockSpeak).toHaveBeenCalledWith(

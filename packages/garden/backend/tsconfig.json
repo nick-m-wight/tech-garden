@@ -25,6 +25,7 @@
       "./node_modules/@types",
       "../../base/backend/node_modules/@types"
     ],
+    "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
       "express-serve-static-core": ["./node_modules/@types/express-serve-static-core/index.d.ts"],

@@ -27,49 +27,48 @@ HTTPS, free, and the phone reaches the backend from anywhere.
 
 ## Option A — Cloudflare Tunnel (recommended)
 
-Cloudflare `cloudflared` creates an outbound tunnel from the Pi to Cloudflare's
-edge. Traffic arrives at a stable HTTPS URL without any router changes.
+Cloudflare `cloudflared` creates an outbound-only tunnel from the Pi to Cloudflare's
+edge. No port-forwarding, no public IP required, free HTTPS on your own domain.
 
-### Setup
+### Two ports, two hostnames
 
-```bash
-# 1. Install cloudflared on the Pi
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64 \
-  -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared
+This project needs **two** public endpoints:
 
-# 2. Authenticate (opens a browser — run on a machine with a browser, then copy cert)
-cloudflared tunnel login
+| Hostname | Forwards to | Used by |
+|---|---|---|
+| `api.yourdomain.com` | `http://localhost:80` (nginx) | Mobile app, browser |
+| `mentra.yourdomain.com` | `http://localhost:7010` | MentraOS Cloud (glasses sessions) |
 
-# 3. Create a named tunnel
-cloudflared tunnel create tech-garden
+Both run through a single tunnel. You choose the subdomains — they just need to be
+on a domain whose DNS is managed by Cloudflare.
 
-# 4. Route a hostname to the tunnel
-#    (requires a domain managed by Cloudflare DNS)
-cloudflared tunnel route dns tech-garden api.yourdomain.com
+### Prerequisites
 
-# 5. Create config
-cat > /etc/cloudflared/config.yml <<EOF
-tunnel: <TUNNEL_ID>
-credentials-file: /root/.cloudflared/<TUNNEL_ID>.json
-ingress:
-  - hostname: api.yourdomain.com
-    service: http://localhost:80       # nginx
-  - service: http_status:404
-EOF
+1. A free [Cloudflare account](https://dash.cloudflare.com/sign-up).
+2. A domain with its nameservers pointed at Cloudflare (or a domain registered at
+   Cloudflare Registrar). This is a one-time DNS change at your current registrar.
+3. The Pi is running and can reach the internet.
 
-# 6. Install and start as a systemd service
-cloudflared service install
-systemctl enable --now cloudflared
-```
+### Step 1 — Create the tunnel in the Cloudflare dashboard
 
-### .env.prod change
+1. Go to **Cloudflare dashboard → Zero Trust → Networks → Tunnels**.
+2. Click **Create a tunnel** → choose **Cloudflared** → name it `tech-garden`.
+3. Cloudflare shows you a **tunnel token** — copy it. You will put it in `.env.prod`.
+4. Under **Public Hostnames**, add two entries:
 
-```
-# Mobile app points here
-EXPO_PUBLIC_API_BASE_URL=https://api.yourdomain.com
-```
+   | Subdomain | Domain | Type | URL |
+   |---|---|---|---|
+   | `api` | `yourdomain.com` | HTTP | `localhost:80` |
+   | `mentra` | `yourdomain.com` | HTTP | `localhost:7010` |
 
-### docker-compose addition (optional — run cloudflared in Docker instead)
+   Cloudflare creates the DNS records automatically.
+
+5. Save. The tunnel shows as **Inactive** until `cloudflared` connects.
+
+### Step 2 — Add cloudflared to docker-compose.prod.yml
+
+The simplest approach is to run `cloudflared` as a container alongside the backend.
+Add this service to `docker-compose.prod.yml`:
 
 ```yaml
   cloudflared:
@@ -78,11 +77,68 @@ EXPO_PUBLIC_API_BASE_URL=https://api.yourdomain.com
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
     restart: unless-stopped
-    depends_on:
-      - nginx
+    network_mode: host          # lets cloudflared reach localhost:80 and localhost:7010
 ```
 
-Add `CLOUDFLARE_TUNNEL_TOKEN=` to `.env.prod` (get from Cloudflare dashboard).
+`network_mode: host` is important — it gives the container access to `localhost` on
+the Pi, which is where nginx (port 80) and the AppServer (port 7010) listen.
+
+### Step 3 — Update .env.prod
+
+```env
+# Cloudflare Tunnel
+CLOUDFLARE_TUNNEL_TOKEN=eyJ...   # paste the token from the dashboard
+
+# Mobile app API base URL
+EXPO_PUBLIC_API_BASE_URL=https://api.yourdomain.com
+
+# MentraOS AppServer public URL — register this in the MentraOS developer console
+# so MentraOS Cloud knows where to send glasses session webhooks
+MENTRA_PUBLIC_URL=https://mentra.yourdomain.com
+```
+
+### Step 4 — Register the AppServer URL with MentraOS
+
+Log in to [console.mentra.glass](https://console.mentra.glass) and set your app's
+**Webhook URL** to `https://mentra.yourdomain.com`. MentraOS Cloud will POST to
+this address when a glasses session starts.
+
+### Step 5 — Start everything
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+The `cloudflared` container connects to Cloudflare's edge. The tunnel shows
+**Active** in the dashboard within a few seconds. Both hostnames are now live.
+
+### Verify
+
+```bash
+# API health check (should return {"status":"ok"})
+curl https://api.yourdomain.com/health
+
+# AppServer reachable (should return 404 or similar — it's not an HTTP API,
+# but a 4xx from Cloudflare's edge means the tunnel is working)
+curl -I https://mentra.yourdomain.com
+```
+
+### Alternative — run cloudflared as a systemd service (no Docker)
+
+If you prefer to run `cloudflared` directly on the Pi OS instead of in Docker:
+
+```bash
+# Install cloudflared binary (Pi 4/5 = arm64)
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64 \
+  -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared
+
+# Install as a systemd service using the tunnel token
+cloudflared service install <TUNNEL_TOKEN>
+systemctl enable --now cloudflared
+```
+
+The tunnel config (hostnames, routes) lives entirely in the Cloudflare dashboard —
+no local config file needed with the token-based approach.
 
 ---
 

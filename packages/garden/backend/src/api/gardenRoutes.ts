@@ -12,8 +12,8 @@ import type { Database } from 'better-sqlite3';
 import { requireAuth } from '../../../../base/backend/src/auth/middleware';
 import { auditLog } from '../../../../base/backend/src/audit/logger';
 import { getZonesByUserId, getZoneById } from '../homeAssistant/zones';
-import { getAnalysesByUser, getAnalysisById } from '../storage/plantHistory';
-import { loadPhoto, getPhotoRecord, validateMagicBytes } from '../storage/photoStore';
+import { getAnalysesByUser, getAnalysisById, deleteAnalysis } from '../storage/plantHistory';
+import { loadPhoto, getPhotoRecord, validateMagicBytes, deletePhoto } from '../storage/photoStore';
 import { PlantAnalysisResponseSchema } from '../ai/plantAnalysis';
 import { HAClient } from '../homeAssistant/client';
 import { executeCommand, PERMITTED_COMMANDS } from '../homeAssistant/actuators';
@@ -148,6 +148,35 @@ export function createGardenRouter(db: Database): Router {
       wateringNeeds: full?.wateringNeeds ?? { status: 'unknown', recommendation: '' },
       spokenSummary: analysis.spokenSummary,
     });
+  });
+
+  // Analysis delete — permanent, removes photo file and DB row.
+  // OWASP A01 — userId-scoped lookup before delete; 404 on miss (no user enumeration).
+  router.delete('/analyses/:id', requireAuth, (req, res): void => {
+    const userId = req.user!.userId;
+    const analysisId = req.params['id'];
+
+    if (!analysisId) {
+      res.status(400).json({ error: 'missing id' });
+      return;
+    }
+
+    const analysis = getAnalysisById(db, analysisId, userId);
+    if (!analysis) {
+      auditLog({
+        action: 'garden.api.analysis_delete',
+        userId,
+        result: 'denied',
+        metadata: { analysisId, reason: 'not_found_or_wrong_user' },
+      });
+      res.status(404).json({ error: 'not found' });
+      return;
+    }
+
+    deletePhoto(db, analysis.photoId, userId);
+    deleteAnalysis(db, analysisId, userId);
+
+    res.status(204).send();
   });
 
   // HA action — triggered by "Send to HA" button on phone.

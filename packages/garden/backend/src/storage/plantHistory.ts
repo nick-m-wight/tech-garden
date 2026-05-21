@@ -281,3 +281,24 @@ export function getAnalysesByUser(db: Database, userId: string): AnalysisRecord[
     .all(userId) as AnalysisRow[];
   return rows.map(rowToAnalysis);
 }
+
+export function deleteAnalysis(db: Database, analysisId: string, userId: string): boolean {
+  const row = db
+    .prepare('SELECT id FROM analyses WHERE id = ? AND user_id = ?')
+    .get(analysisId, userId) as { id: string } | undefined;
+
+  if (!row) {
+    auditLog({
+      action: 'analysis.delete',
+      userId,
+      result: 'denied',
+      metadata: { analysisId, reason: 'not_found_or_wrong_user' },
+    });
+    return false;
+  }
+
+  db.prepare('DELETE FROM analyses WHERE id = ? AND user_id = ?').run(analysisId, userId);
+
+  auditLog({ action: 'analysis.delete', userId, result: 'success', metadata: { analysisId } });
+  return true;
+}

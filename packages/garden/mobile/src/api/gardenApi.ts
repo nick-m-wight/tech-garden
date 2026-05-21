@@ -80,6 +80,17 @@ export function useAnalysis(analysisId: string) {
   });
 }
 
+export function useDeleteAnalysis() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (analysisId: string) =>
+      apiClient.del<void>(`/api/garden/analyses/${analysisId}`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['garden', 'analyses'] });
+    },
+  });
+}
+
 export function useHaAction() {
   const queryClient = useQueryClient();
   return useMutation({

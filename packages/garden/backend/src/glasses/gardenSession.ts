@@ -217,7 +217,7 @@ async function handlePhoto(
   void session.audio.speak('Taking a photo, please hold still.').catch(() => {});
 
   // Take the photo via SDK (resolves when glasses return the image).
-  const photo = await session.camera.requestPhoto({ size: 'medium' });
+  const photo = await session.camera.requestPhoto({ size: 'medium', saveToGallery: true });
   void session.audio.speak('Analysing your plant. One moment.').catch(() => {});
 
   // Find zone context for sensor readings.

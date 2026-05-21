@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
   View,
   Text,
@@ -6,9 +6,11 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
+  Alert,
 } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 import { router } from 'expo-router';
-import { useAnalyses } from '../api/gardenApi';
+import { useAnalyses, useDeleteAnalysis } from '../api/gardenApi';
 import type { AnalysisSummary } from '../api/gardenApi';
 
 function healthBadgeColor(health: string): { backgroundColor: string } {
@@ -22,42 +24,74 @@ function healthBadgeColor(health: string): { backgroundColor: string } {
   return { backgroundColor: '#fef3c7' };
 }
 
-function HistoryItem({ item }: { item: AnalysisSummary }) {
+function HistoryItem({
+  item,
+  onDelete,
+}: {
+  item: AnalysisSummary;
+  onDelete: () => void;
+}) {
+  const swipeableRef = useRef<Swipeable>(null);
   const date = new Date(item.timestamp).toLocaleDateString();
   const time = new Date(item.timestamp).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
   });
 
-  return (
-    <TouchableOpacity
-      style={styles.item}
-      onPress={() =>
-        router.push({ pathname: '/(app)/plant-analysis', params: { id: item.analysisId } })
-      }
-    >
-      <View style={styles.itemHeader}>
-        <Text style={styles.itemDate}>
-          {date} {time}
-        </Text>
-        <View style={[styles.healthBadge, healthBadgeColor(item.overallHealth)]}>
-          <Text style={styles.healthBadgeText}>{item.overallHealth}</Text>
-        </View>
-      </View>
-      <Text style={styles.itemSummary} numberOfLines={2}>
-        {item.spokenSummary}
-      </Text>
-      {item.issueCount > 0 && (
-        <Text style={styles.issueCount}>
-          {item.issueCount} issue{item.issueCount !== 1 ? 's' : ''}
-        </Text>
-      )}
+  const handleDeletePress = () => {
+    swipeableRef.current?.close();
+    Alert.alert(
+      'Delete Analysis',
+      'This will permanently delete the photo and analysis.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: onDelete },
+      ],
+    );
+  };
+
+  const renderRightActions = () => (
+    <TouchableOpacity style={styles.deleteAction} onPress={handleDeletePress}>
+      <Text style={styles.deleteActionText}>Delete</Text>
     </TouchableOpacity>
+  );
+
+  return (
+    <Swipeable ref={swipeableRef} renderRightActions={renderRightActions}>
+      <TouchableOpacity
+        style={styles.item}
+        onPress={() =>
+          router.push({ pathname: '/(app)/plant-analysis', params: { id: item.analysisId } })
+        }
+      >
+        <View style={styles.itemHeader}>
+          <Text style={styles.itemDate}>
+            {date} {time}
+          </Text>
+          <View style={[styles.healthBadge, healthBadgeColor(item.overallHealth)]}>
+            <Text style={styles.healthBadgeText}>{item.overallHealth}</Text>
+          </View>
+        </View>
+        <Text style={styles.itemSummary} numberOfLines={2}>
+          {item.spokenSummary}
+        </Text>
+        {item.issueCount > 0 && (
+          <Text style={styles.issueCount}>
+            {item.issueCount} issue{item.issueCount !== 1 ? 's' : ''}
+          </Text>
+        )}
+      </TouchableOpacity>
+    </Swipeable>
   );
 }
 
 export default function PlantHistory() {
   const { data: analyses, isLoading, error, refetch } = useAnalyses(50);
+  const deleteMutation = useDeleteAnalysis();
+
+  const handleDelete = (analysisId: string) => {
+    deleteMutation.mutate(analysisId);
+  };
 
   return (
     <View style={styles.container}>
@@ -83,7 +117,9 @@ export default function PlantHistory() {
         <FlatList
           data={analyses}
           keyExtractor={(a) => a.analysisId}
-          renderItem={({ item }) => <HistoryItem item={item} />}
+          renderItem={({ item }) => (
+            <HistoryItem item={item} onDelete={() => handleDelete(item.analysisId)} />
+          )}
           contentContainerStyle={styles.list}
           ListEmptyComponent={
             <Text style={styles.empty}>
@@ -133,4 +169,13 @@ const styles = StyleSheet.create({
   healthBadgeText: { fontSize: 12, fontWeight: '600', color: '#111' },
   itemSummary: { fontSize: 14, color: '#374151', lineHeight: 20 },
   issueCount: { fontSize: 12, color: '#dc2626', marginTop: 6, fontWeight: '500' },
+  deleteAction: {
+    backgroundColor: '#dc2626',
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 80,
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  deleteActionText: { color: '#fff', fontWeight: '700', fontSize: 14 },
 });

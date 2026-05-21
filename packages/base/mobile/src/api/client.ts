@@ -39,6 +39,10 @@ async function request<T>(
     throw new ApiError(response.status, `Request failed: ${response.status}`);
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return response.json() as Promise<T>;
 }
 
@@ -103,5 +107,9 @@ export const apiClient = {
 
   async post<T>(path: string, body: unknown): Promise<T> {
     return request<T>(path, { method: 'POST', body: JSON.stringify(body) });
+  },
+
+  async del<T>(path: string): Promise<T> {
+    return request<T>(path, { method: 'DELETE' });
   },
 };

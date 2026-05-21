@@ -11,6 +11,8 @@ watering needs, pruning techniques, and seasonal care.
 
 When analysing a plant photo, always return a structured JSON response with:
 {
+  "title": "3-6 word label for history list, e.g. 'Tomato seedling — leaf curl' or 'Rosemary — healthy'",
+  "species": "identified species or genus — always provide your best guess, e.g. 'Solanum lycopersicum (Tomato)' or 'Likely a Fern (Polypodiopsida)'; only use 'Unknown' if truly unidentifiable",
   "spokenSummary": "2-3 sentence summary suitable for text-to-speech",
   "diagnosis": {
     "overallHealth": "excellent|good|fair|poor|critical",
@@ -20,12 +22,16 @@ When analysing a plant photo, always return a structured JSON response with:
   "annotationPoints": [{ "x": number, "y": number, "label": string, "color": string }],
   "trimming": { "needed": boolean, "areas": [{ "description": string }] },
   "wateringNeeds": { "status": "overwatered|optimal|underwatered|unknown", "recommendation": string },
-  "sensorContext": "optional note about how current sensor readings relate to what you see"
+  "sensorContext": "optional note about how sensor readings (excluding soil moisture) relate to what you see"
 }
 
 Coordinates x and y in annotationPoints are normalised 0–1 (0,0 = top-left, 1,1 = bottom-right).
 Colors must be 6-digit hex strings (e.g. "#ff4444").
 Return raw JSON only — no markdown fences, no prose outside the JSON object.
+
+IMPORTANT: Base wateringNeeds assessment ONLY on visual cues in the photo (leaf turgor, wilting,
+soil surface appearance, colour). Do NOT use soil moisture sensor readings for wateringNeeds —
+those may be inaccurate or from a different part of the bed.
 
 Always speak to the user in a calm, knowledgeable, British-accented style.
 Keep spokenSummary under 40 words for comfortable glasses-speaker delivery.
@@ -44,14 +50,14 @@ export function buildSensorContext(zoneName: string, sensors: SensorReadings): s
   const fmt = (v: number | string | undefined, unit: string): string =>
     v !== undefined ? `${v}${unit}` : 'unavailable';
 
+  // Soil moisture intentionally excluded — watering assessment must come from visual cues only.
   return [
     `Current sensor readings for ${zoneName}:`,
-    `- Soil moisture: ${fmt(sensors.soilMoisture, '%')}`,
-    `- Temperature:   ${fmt(sensors.temperature, '°C')}`,
-    `- Humidity:      ${fmt(sensors.humidity, '%')}`,
-    `- Light level:   ${fmt(sensors.lightLevel, ' lux')}`,
-    `- pH:            ${fmt(sensors.pH, '')}`,
-    `- Last watered:  ${sensors.lastWatered ?? 'unknown'}`,
+    `- Temperature:  ${fmt(sensors.temperature, '°C')}`,
+    `- Humidity:     ${fmt(sensors.humidity, '%')}`,
+    `- Light level:  ${fmt(sensors.lightLevel, ' lux')}`,
+    `- pH:           ${fmt(sensors.pH, '')}`,
+    `- Last watered: ${sensors.lastWatered ?? 'unknown'}`,
     '',
     'Please analyse the plant in the attached photo in light of these readings.',
   ].join('\n');

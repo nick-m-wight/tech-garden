@@ -69,14 +69,25 @@ export function createGardenRouter(db: Database): Router {
     const analyses = getAnalysesByUser(db, userId).slice(0, limit);
 
     res.json({
-      analyses: analyses.map((a) => ({
-        analysisId: a.analysisId,
-        photoId: a.photoId,
-        timestamp: a.createdAt.toISOString(),
-        overallHealth: a.diagnosis.overallHealth,
-        spokenSummary: a.spokenSummary,
-        issueCount: a.diagnosis.issues.length,
-      })),
+      analyses: analyses.map((a) => {
+        let title: string | null = null;
+        let species: string | null = null;
+        try {
+          const raw = JSON.parse(a.rawResponse) as Record<string, unknown>;
+          if (typeof raw['title'] === 'string') title = raw['title'];
+          if (typeof raw['species'] === 'string') species = raw['species'];
+        } catch { /* rawResponse may be a minimal stub */ }
+        return {
+          analysisId: a.analysisId,
+          photoId: a.photoId,
+          timestamp: a.createdAt.toISOString(),
+          overallHealth: a.diagnosis.overallHealth,
+          title: title ?? a.spokenSummary,
+          species,
+          spokenSummary: a.spokenSummary,
+          issueCount: a.diagnosis.issues.length,
+        };
+      }),
     });
   });
 
@@ -141,6 +152,8 @@ export function createGardenRouter(db: Database): Router {
       photoBase64,
       photoMimeType,
       timestamp: analysis.createdAt.toISOString(),
+      title: full?.title ?? analysis.spokenSummary,
+      species: full?.species ?? null,
       diagnosis: analysis.diagnosis,
       recommendations: analysis.recommendations,
       annotationPoints: full?.annotationPoints ?? [],

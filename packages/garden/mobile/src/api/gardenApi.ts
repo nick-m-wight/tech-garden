@@ -13,6 +13,8 @@ export interface AnalysisSummary {
   photoId: string;
   timestamp: string;
   overallHealth: string;
+  title: string;
+  species: string | null;
   spokenSummary: string;
   issueCount: number;
 }
@@ -42,6 +44,8 @@ export interface AnalysisDetail {
   photoBase64: string | null;
   photoMimeType: string;
   timestamp: string;
+  title: string;
+  species: string | null;
   diagnosis: {
     overallHealth: string;
     issues: Issue[];

@@ -17,6 +17,8 @@ import type { SensorReadings } from './gardenExpert';
 // ---- Response schema (OWASP A08) ----
 
 export const PlantAnalysisResponseSchema = z.object({
+  title: z.string().min(1).max(80),
+  species: z.string().min(1).max(120),
   spokenSummary: z.string().min(1).max(500),
   diagnosis: z.object({
     overallHealth: z.enum(['excellent', 'good', 'fair', 'poor', 'critical']),

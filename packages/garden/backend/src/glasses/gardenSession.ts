@@ -266,6 +266,8 @@ async function handlePhoto(
     });
     // Stub analysis so the photo still appears in history on the phone.
     analysis = {
+      title: 'Photo saved',
+      species: 'Unknown',
       spokenSummary: 'Photo saved. Analysis unavailable.',
       diagnosis: { overallHealth: 'unknown' as never, issues: [] },
       recommendations: [],

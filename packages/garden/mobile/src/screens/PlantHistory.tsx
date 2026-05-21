@@ -65,21 +65,19 @@ function HistoryItem({
         }
       >
         <View style={styles.itemHeader}>
-          <Text style={styles.itemDate}>
-            {date} {time}
+          <Text style={styles.itemTitle} numberOfLines={1}>
+            {item.species ?? 'Unknown'}
           </Text>
           <View style={[styles.healthBadge, healthBadgeColor(item.overallHealth)]}>
             <Text style={styles.healthBadgeText}>{item.overallHealth}</Text>
           </View>
         </View>
-        <Text style={styles.itemSummary} numberOfLines={2}>
-          {item.spokenSummary}
-        </Text>
         {item.issueCount > 0 && (
           <Text style={styles.issueCount}>
             {item.issueCount} issue{item.issueCount !== 1 ? 's' : ''}
           </Text>
         )}
+        <Text style={styles.itemDate}>{date} {time}</Text>
       </TouchableOpacity>
     </Swipeable>
   );
@@ -162,13 +160,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 4,
   },
-  itemDate: { fontSize: 13, color: '#6b7280' },
+  itemTitle: { fontSize: 15, fontWeight: '600', color: '#1a1a1a', flex: 1, marginRight: 8 },
+  itemSpecies: { fontSize: 12, color: '#6b7280', fontStyle: 'italic', marginBottom: 4 },
   healthBadge: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3 },
   healthBadgeText: { fontSize: 12, fontWeight: '600', color: '#111' },
-  itemSummary: { fontSize: 14, color: '#374151', lineHeight: 20 },
-  issueCount: { fontSize: 12, color: '#dc2626', marginTop: 6, fontWeight: '500' },
+  issueCount: { fontSize: 12, color: '#dc2626', marginTop: 2, fontWeight: '500' },
+  itemDate: { fontSize: 11, color: '#9ca3af', marginTop: 6, textAlign: 'right' },
   deleteAction: {
     backgroundColor: '#dc2626',
     justifyContent: 'center',

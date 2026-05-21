@@ -290,6 +290,8 @@ describe('Flow 1 — voice transcription → HA sensor read → speak', () => {
     mockSaveAnalysis.mockReturnValue({ analysisId: 'analysis-fu' });
     mockLinkAnalysis.mockReturnValue(undefined);
     mockAnalysePlant.mockResolvedValue({
+      title: 'Plant — early mildew',
+      species: 'Unknown',
       spokenSummary: 'Early signs of mildew on upper leaves.',
       diagnosis: { overallHealth: 'fair', issues: [] },
       recommendations: [],
@@ -337,6 +339,8 @@ describe('Flow 1 — voice transcription → HA sensor read → speak', () => {
 
 describe('Flow 2 — button press → photo capture → Claude Vision → speak', () => {
   const fakeAnalysis: PlantAnalysisResponse = {
+    title: 'Plant — powdery mildew',
+    species: 'Unknown',
     spokenSummary: 'I see early signs of powdery mildew on the upper leaves.',
     diagnosis: {
       overallHealth: 'fair',

@@ -6,10 +6,13 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Share,
   StyleSheet,
 } from 'react-native';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { useLocalSearchParams, router } from 'expo-router';
-import { useAnalysis, useZones, useHaAction } from '../api/gardenApi';
+import { useAnalysis, useZones, useHaAction, useDeleteAnalysis } from '../api/gardenApi';
 import AnnotatedImage from '../components/AnnotatedImage';
 
 export default function PlantAnalysis() {
@@ -19,6 +22,33 @@ export default function PlantAnalysis() {
   const { data: analysis, isLoading, error } = useAnalysis(analysisId);
   const { data: zones } = useZones();
   const haAction = useHaAction();
+  const deleteMutation = useDeleteAnalysis();
+
+  const handleShare = async () => {
+    if (!analysis) return;
+
+    const lines = [
+      analysis.title,
+      analysis.species ? `Species: ${analysis.species}` : null,
+      `Health: ${analysis.diagnosis.overallHealth}`,
+      '',
+      analysis.spokenSummary,
+    ].filter(Boolean).join('\n');
+
+    if (analysis.photoBase64 && (await Sharing.isAvailableAsync())) {
+      const ext = analysis.photoMimeType === 'image/png' ? 'png' : 'jpg';
+      const fileUri = `${FileSystem.cacheDirectory}plant-analysis-${analysisId}.${ext}`;
+      await FileSystem.writeAsStringAsync(fileUri, analysis.photoBase64, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      await Sharing.shareAsync(fileUri, {
+        mimeType: analysis.photoMimeType,
+        dialogTitle: analysis.title,
+      });
+    } else {
+      await Share.share({ message: lines });
+    }
+  };
 
   const confirmHaAction = (command: string, zoneId: string) => {
     Alert.alert('Confirm', `Send "${command}" to zone?`, [
@@ -48,9 +78,31 @@ export default function PlantAnalysis() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-        <Text style={styles.backText}>← Back</Text>
-      </TouchableOpacity>
+      <View style={styles.topBar}>
+        <TouchableOpacity onPress={() => router.back()}>
+          <Text style={styles.backText}>← Back</Text>
+        </TouchableOpacity>
+        <View style={styles.topBarActions}>
+          <TouchableOpacity onPress={() => void handleShare()}>
+            <Text style={styles.shareText}>Share</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() =>
+              Alert.alert('Delete Analysis', 'This will permanently delete the photo and analysis.', [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete',
+                  style: 'destructive',
+                  onPress: () =>
+                    deleteMutation.mutate(analysisId, { onSuccess: () => router.back() }),
+                },
+              ])
+            }
+          >
+            <Text style={styles.deleteText}>Delete</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
       {analysis.photoBase64 != null ? (
         <View style={styles.imageContainer}>
@@ -67,6 +119,9 @@ export default function PlantAnalysis() {
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Diagnosis</Text>
+        {analysis.species != null && (
+          <Text style={styles.species}>{analysis.species}</Text>
+        )}
         <Text style={styles.health}>
           {'Overall health: '}
           <Text style={styles.healthValue}>{analysis.diagnosis.overallHealth}</Text>
@@ -142,8 +197,19 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   content: { paddingBottom: 40 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16 },
-  backButton: { paddingHorizontal: 20, paddingTop: 56, paddingBottom: 12 },
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 56,
+    paddingBottom: 12,
+  },
+  topBarActions: { flexDirection: 'row', gap: 16, alignItems: 'center' },
   backText: { fontSize: 16, color: '#2d6a4f', fontWeight: '600' },
+  shareText: { fontSize: 16, color: '#2563eb', fontWeight: '600' },
+  deleteText: { fontSize: 16, color: '#dc2626', fontWeight: '600' },
+  species: { fontSize: 13, color: '#6b7280', fontStyle: 'italic', marginBottom: 6 },
   imageContainer: { width: '100%', height: 300 },
   noPhoto: { backgroundColor: '#f3f4f6', justifyContent: 'center', alignItems: 'center' },
   noPhotoText: { color: '#9ca3af', fontSize: 14 },

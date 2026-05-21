@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { initDb } from '../store/db';
 import { useAuthStore } from '../store/authStore';
 
@@ -26,10 +27,12 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
 
 export default function RootLayout() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AppInitializer>
-        <Stack screenOptions={{ headerShown: false }} />
-      </AppInitializer>
-    </QueryClientProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <QueryClientProvider client={queryClient}>
+        <AppInitializer>
+          <Stack screenOptions={{ headerShown: false }} />
+        </AppInitializer>
+      </QueryClientProvider>
+    </GestureHandlerRootView>
   );
 }

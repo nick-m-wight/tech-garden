@@ -1,11 +1,25 @@
 // A07 — Identification and Authentication Failures: no password hints, no auto-fill of
 // previous failed passwords. Errors give no information about which field is wrong.
-import { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+} from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { router } from 'expo-router';
 import { z } from 'zod';
 import { useAuthStore } from '../../store/authStore';
 import { ApiError } from '../../api/client';
+
+const SAVED_EMAIL_KEY = 'login.savedEmail';
 
 const loginSchema = z.object({
   email: z.string().email('Enter a valid email address.'),
@@ -18,6 +32,12 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const login = useAuthStore((s) => s.login);
 
+  useEffect(() => {
+    SecureStore.getItemAsync(SAVED_EMAIL_KEY)
+      .then((saved) => { if (saved) setEmail(saved); })
+      .catch(() => {});
+  }, []);
+
   async function handleLogin() {
     const validation = loginSchema.safeParse({ email, password });
     if (!validation.success) {
@@ -28,6 +48,7 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       await login(validation.data.email, validation.data.password);
+      await SecureStore.setItemAsync(SAVED_EMAIL_KEY, validation.data.email);
       router.replace('/(app)/home');
     } catch (err) {
       // A09 — Security Logging: login failures logged server-side; client only shows generic message.
@@ -42,49 +63,62 @@ export default function LoginScreen() {
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Sign in</Text>
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <ScrollView
+        contentContainerStyle={styles.container}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.title}>Sign in</Text>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
-        autoCapitalize="none"
-        autoComplete="email"
-        textContentType="emailAddress"
-        editable={!loading}
-      />
+        <TextInput
+          style={styles.input}
+          placeholder="Email"
+          value={email}
+          onChangeText={setEmail}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          autoComplete="email"
+          textContentType="emailAddress"
+          editable={!loading}
+        />
 
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-        autoComplete="current-password"
-        textContentType="password"
-        editable={!loading}
-      />
+        <TextInput
+          style={styles.input}
+          placeholder="Password"
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+          autoComplete="current-password"
+          textContentType="password"
+          editable={!loading}
+        />
 
-      <TouchableOpacity style={[styles.button, loading && styles.buttonDisabled]} onPress={handleLogin} disabled={loading}>
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.buttonText}>Sign in</Text>
-        )}
-      </TouchableOpacity>
-    </View>
+        <TouchableOpacity
+          style={[styles.button, loading && styles.buttonDisabled]}
+          onPress={handleLogin}
+          disabled={loading}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>Sign in</Text>
+          )}
+        </TouchableOpacity>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
+  flex: { flex: 1, backgroundColor: '#fff' },
   container: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: 'center',
     paddingHorizontal: 24,
-    backgroundColor: '#fff',
+    paddingVertical: 40,
   },
   title: {
     fontSize: 28,
@@ -111,12 +145,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 8,
   },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
+  buttonDisabled: { opacity: 0.6 },
+  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 });

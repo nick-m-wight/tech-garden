@@ -19,6 +19,7 @@ import type { SensorReadings } from './gardenExpert';
 export const PlantAnalysisResponseSchema = z.object({
   title: z.string().min(1).max(80),
   species: z.string().min(1).max(120),
+  speciesConfidence: z.enum(['high', 'medium', 'low']).default('low'),
   spokenSummary: z.string().min(1).max(500),
   diagnosis: z.object({
     overallHealth: z.enum(['excellent', 'good', 'fair', 'poor', 'critical']),
@@ -101,6 +102,7 @@ export interface AnalysePlantParams {
   zoneId: string;
   zoneName: string;
   sensors: SensorReadings;
+  speciesHint?: string;
 }
 
 export async function analysePlant(
@@ -112,7 +114,10 @@ export async function analysePlant(
   }
 
   const mediaType = detectMediaType(params.imageBase64); // OWASP A03
-  const sensorContext = buildSensorContext(params.zoneName, params.sensors);
+  let sensorContext = buildSensorContext(params.zoneName, params.sensors);
+  if (params.speciesHint) {
+    sensorContext += `\n\nIMPORTANT: The user has confirmed this plant is a ${params.speciesHint}. Treat this as the correct species. Set speciesConfidence to "high".`;
+  }
 
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 

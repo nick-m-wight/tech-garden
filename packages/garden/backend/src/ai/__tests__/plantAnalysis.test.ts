@@ -74,6 +74,7 @@ describe('detectMediaType', () => {
 const VALID_RESPONSE: PlantAnalysisResponse = {
   title: 'Healthy plant — underwatering',
   species: 'Unknown',
+  speciesConfidence: 'low',
   spokenSummary: 'The plant looks healthy with minor signs of underwatering.',
   diagnosis: {
     overallHealth: 'good',

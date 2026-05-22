@@ -14,6 +14,7 @@ services:
     env_file: .env.dev
     volumes:
       - ./packages/garden/backend/src:/app/packages/garden/backend/src
+      - ./packages/base/backend/src:/app/packages/base/backend/src
       - ./data/dev:/app/packages/garden/backend/data
       - ./keys:/app/packages/garden/backend/keys:ro
     user: "node"

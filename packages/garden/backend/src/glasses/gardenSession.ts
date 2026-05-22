@@ -25,6 +25,8 @@ import { savePhoto } from '../storage/photoStore';
 import { saveAnalysis } from '../storage/plantHistory';
 import { linkAnalysisToPhoto } from '../storage/photoStore';
 import { analysePlant } from '../ai/plantAnalysis';
+import { notifyAnalysisReady } from '../api/sse';
+import sharp from 'sharp';
 import { askFollowUp } from '../ai/followUp';
 import type { SensorReadings } from '../ai/gardenExpert';
 import {
@@ -233,15 +235,30 @@ async function handlePhoto(
       ? await gatherZoneSensors(haClient, db, activeZone, userId)
       : {};
 
+  // Resize to max 1024px before storing and sending to Claude (halves token cost).
+  let photoBuffer = photo.buffer;
+  try {
+    const meta = await sharp(photoBuffer).metadata();
+    const longSide = Math.max(meta.width ?? 0, meta.height ?? 0);
+    if (longSide > 1024) {
+      photoBuffer = await sharp(photoBuffer)
+        .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 88 })
+        .toBuffer();
+    }
+  } catch {
+    // Use original if resize fails.
+  }
+
   // Encrypt and store the photo (OWASP A02, A03).
   const photoRecord = savePhoto(db, {
-    imageBuffer: photo.buffer,
+    imageBuffer: photoBuffer,
     userId,
     zoneId: activeZone?.id ?? undefined,
   });
 
   // Send to Claude Vision — gracefully degrade if API key is absent or call fails.
-  const imageBase64 = photo.buffer.toString('base64');
+  const imageBase64 = photoBuffer.toString('base64');
   let analysis: Awaited<ReturnType<typeof analysePlant>>;
   let spokenSummary: string;
   try {
@@ -268,6 +285,7 @@ async function handlePhoto(
     analysis = {
       title: 'Photo saved',
       species: 'Unknown',
+      speciesConfidence: 'low',
       spokenSummary: 'Photo saved. Analysis unavailable.',
       diagnosis: { overallHealth: 'unknown' as never, issues: [] },
       recommendations: [],
@@ -286,6 +304,7 @@ async function handlePhoto(
     rawResponse: JSON.stringify(analysis),
   });
   linkAnalysisToPhoto(db, photoRecord.photoId, userId, analysisRecord.analysisId);
+  notifyAnalysisReady(userId, analysisRecord.analysisId);
 
   // Speak the summary through the glasses.
   conversationState.lastSpokenResponse = spokenSummary;

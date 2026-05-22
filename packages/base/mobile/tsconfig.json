@@ -14,7 +14,14 @@
       "react-native": ["./node_modules/react-native"],
       "expo-router": ["./node_modules/expo-router"],
       "@tanstack/react-query": ["./node_modules/@tanstack/react-query"],
-      "@shopify/react-native-skia": ["./node_modules/@shopify/react-native-skia"]
+      "@shopify/react-native-skia": ["./node_modules/@shopify/react-native-skia"],
+      "react-native-gesture-handler": ["./node_modules/react-native-gesture-handler"],
+      "react-native-reanimated": ["./node_modules/react-native-reanimated"],
+      "expo-file-system": ["./node_modules/expo-file-system"],
+      "expo-file-system/legacy": ["./node_modules/expo-file-system/src/legacy"],
+      "expo-sharing": ["./node_modules/expo-sharing"],
+      "react-native-safe-area-context": ["./node_modules/react-native-safe-area-context"],
+      "expo-speech": ["./node_modules/expo-speech"]
     }
   },
   "include": [

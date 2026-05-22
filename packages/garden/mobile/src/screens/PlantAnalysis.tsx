@@ -1,19 +1,20 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
+  TextInput,
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  Share,
+  Modal,
   StyleSheet,
 } from 'react-native';
-import * as FileSystem from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
 import { useLocalSearchParams, router } from 'expo-router';
-import { useAnalysis, useZones, useHaAction, useDeleteAnalysis } from '../api/gardenApi';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useAnalysis, useZones, useHaAction, useDeleteAnalysis, useReanalyze } from '../api/gardenApi';
 import AnnotatedImage from '../components/AnnotatedImage';
+import CropZoomView, { type CropRect } from '../components/CropZoomView';
 
 export default function PlantAnalysis() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -23,31 +24,25 @@ export default function PlantAnalysis() {
   const { data: zones } = useZones();
   const haAction = useHaAction();
   const deleteMutation = useDeleteAnalysis();
+  const reanalyzeMutation = useReanalyze();
+  const [cropMode, setCropMode] = useState(false);
+  const [speciesInput, setSpeciesInput] = useState('');
 
-  const handleShare = async () => {
-    if (!analysis) return;
-
-    const lines = [
-      analysis.title,
-      analysis.species ? `Species: ${analysis.species}` : null,
-      `Health: ${analysis.diagnosis.overallHealth}`,
-      '',
-      analysis.spokenSummary,
-    ].filter(Boolean).join('\n');
-
-    if (analysis.photoBase64 && (await Sharing.isAvailableAsync())) {
-      const ext = analysis.photoMimeType === 'image/png' ? 'png' : 'jpg';
-      const fileUri = `${FileSystem.cacheDirectory}plant-analysis-${analysisId}.${ext}`;
-      await FileSystem.writeAsStringAsync(fileUri, analysis.photoBase64, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      await Sharing.shareAsync(fileUri, {
-        mimeType: analysis.photoMimeType,
-        dialogTitle: analysis.title,
-      });
-    } else {
-      await Share.share({ message: lines });
-    }
+  const handleCrop = (rect: CropRect) => {
+    setCropMode(false);
+    if (!analysis?.photoBase64) return;
+    reanalyzeMutation.mutate(
+      { imageBase64: analysis.photoBase64, cropRect: rect, zoneId: zones?.[0]?.id },
+      {
+        onSuccess: ({ analysisId: newId }) => {
+          setSpeciesInput('');
+          router.push({ pathname: '/(app)/plant-analysis', params: { id: newId } });
+        },
+        onError: () => {
+          Alert.alert('Analysis failed', 'Could not analyse the cropped area. Please try again.');
+        },
+      },
+    );
   };
 
   const confirmHaAction = (command: string, zoneId: string) => {
@@ -77,119 +72,197 @@ export default function PlantAnalysis() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.topBar}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
-        <View style={styles.topBarActions}>
-          <TouchableOpacity onPress={() => void handleShare()}>
-            <Text style={styles.shareText}>Share</Text>
+    <>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <View style={styles.topBar}>
+          <TouchableOpacity onPress={() => router.navigate('/(app)/plant-history')}>
+            <Text style={styles.backText}>← History</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() =>
-              Alert.alert('Delete Analysis', 'This will permanently delete the photo and analysis.', [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Delete',
-                  style: 'destructive',
-                  onPress: () =>
-                    deleteMutation.mutate(analysisId, { onSuccess: () => router.back() }),
-                },
-              ])
-            }
-          >
-            <Text style={styles.deleteText}>Delete</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {analysis.photoBase64 != null ? (
-        <View style={styles.imageContainer}>
-          <AnnotatedImage
-            imageBase64={analysis.photoBase64}
-            annotations={analysis.annotationPoints}
-          />
-        </View>
-      ) : (
-        <View style={[styles.imageContainer, styles.noPhoto]}>
-          <Text style={styles.noPhotoText}>Photo not available</Text>
-        </View>
-      )}
-
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Diagnosis</Text>
-        {analysis.species != null && (
-          <Text style={styles.species}>{analysis.species}</Text>
-        )}
-        <Text style={styles.health}>
-          {'Overall health: '}
-          <Text style={styles.healthValue}>{analysis.diagnosis.overallHealth}</Text>
-        </Text>
-        <Text style={styles.summary}>{analysis.spokenSummary}</Text>
-
-        {analysis.diagnosis.issues.length > 0 && (
-          <>
-            <Text style={styles.sectionTitle}>
-              Issues ({analysis.diagnosis.issues.length})
-            </Text>
-            {analysis.diagnosis.issues.map((issue, i) => (
-              <View key={i} style={styles.issue}>
-                <Text style={styles.issueSeverity}>{issue.severity.toUpperCase()}</Text>
-                <Text style={styles.issueDesc}>{issue.description}</Text>
-              </View>
-            ))}
-          </>
-        )}
-      </View>
-
-      {analysis.recommendations.length > 0 && (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Recommendations</Text>
-          {analysis.recommendations.map((rec, i) => (
-            <View key={i} style={styles.rec}>
-              <Text style={styles.recPriority}>{rec.priority.toUpperCase()}</Text>
-              <Text style={styles.recAction}>{rec.action}</Text>
-            </View>
-          ))}
-        </View>
-      )}
-
-      {analysis.wateringNeeds.status !== 'unknown' && (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Watering</Text>
-          <Text style={styles.waterStatus}>{analysis.wateringNeeds.status}</Text>
-          <Text style={styles.waterRec}>{analysis.wateringNeeds.recommendation}</Text>
-          {zones != null && zones.length > 0 && (
+          <View style={styles.topBarActions}>
+            {analysis.photoBase64 != null && (
+              <TouchableOpacity onPress={() => setCropMode(true)}>
+                <Text style={styles.cropText}>Inspect</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
-              style={[styles.haButton, haAction.isPending && styles.haButtonDisabled]}
-              disabled={haAction.isPending}
-              onPress={() => {
-                const zone = zones[0];
-                if (zone != null) confirmHaAction('turn_on_water', zone.id);
-              }}
+              onPress={() =>
+                Alert.alert(
+                  'Delete Analysis',
+                  'This will permanently delete the photo and analysis.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Delete',
+                      style: 'destructive',
+                      onPress: () =>
+                        deleteMutation.mutate(analysisId, { onSuccess: () => router.back() }),
+                    },
+                  ],
+                )
+              }
             >
-              <Text style={styles.haButtonText}>
-                {haAction.isPending ? 'Sending…' : 'Send to HA — Water Now'}
-              </Text>
+              <Text style={styles.deleteText}>Delete</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+
+        {reanalyzeMutation.isPending && (
+          <View style={styles.reanalyzeBar}>
+            <ActivityIndicator color="#fff" size="small" />
+            <Text style={styles.reanalyzeText}>Analysing crop…</Text>
+          </View>
+        )}
+
+        {analysis.photoBase64 != null ? (
+          <View style={styles.imageContainer}>
+            <AnnotatedImage
+              imageBase64={analysis.photoBase64}
+              annotations={analysis.annotationPoints}
+            />
+          </View>
+        ) : (
+          <View style={[styles.imageContainer, styles.noPhoto]}>
+            <Text style={styles.noPhotoText}>Photo not available</Text>
+          </View>
+        )}
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Diagnosis</Text>
+          {analysis.species != null && (
+            <>
+              <Text style={styles.species}>{analysis.species}</Text>
+              {analysis.speciesConfidence !== 'high' && (
+                <Text style={styles.speciesConfidenceWarning}>
+                  {analysis.speciesConfidence === 'low'
+                    ? 'Low confidence identification — verify species'
+                    : 'Moderate confidence — identification may vary'}
+                </Text>
+              )}
+            </>
+          )}
+          <Text style={styles.health}>
+            {'Overall health: '}
+            <Text style={styles.healthValue}>{analysis.diagnosis.overallHealth}</Text>
+          </Text>
+          <Text style={styles.summary}>{analysis.spokenSummary}</Text>
+
+          {analysis.diagnosis.issues.length > 0 && (
+            <>
+              <Text style={styles.sectionTitle}>
+                Issues ({analysis.diagnosis.issues.length})
+              </Text>
+              {analysis.diagnosis.issues.map((issue, i) => (
+                <View key={i} style={styles.issue}>
+                  <Text style={styles.issueSeverity}>{issue.severity.toUpperCase()}</Text>
+                  <Text style={styles.issueDesc}>{issue.description}</Text>
+                </View>
+              ))}
+            </>
           )}
         </View>
-      )}
 
-      {analysis.trimming.needed && (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Trimming Needed</Text>
-          {analysis.trimming.areas.map((area, i) => (
-            <Text key={i} style={styles.trimArea}>{'• ' + area}</Text>
-          ))}
-        </View>
-      )}
+        {analysis.recommendations.length > 0 && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Recommendations</Text>
+            {analysis.recommendations.map((rec, i) => (
+              <View key={i} style={styles.rec}>
+                <Text style={styles.recPriority}>{rec.priority.toUpperCase()}</Text>
+                <Text style={styles.recAction}>{rec.action}</Text>
+              </View>
+            ))}
+          </View>
+        )}
 
-      <Text style={styles.timestamp}>
-        {new Date(analysis.timestamp).toLocaleString()}
-      </Text>
-    </ScrollView>
+        {analysis.photoBase64 != null && (
+          <View style={styles.card}>
+            <Text style={styles.correctTitle}>Wrong plant?</Text>
+            <Text style={styles.correctSubtitle}>Type the correct name and re-analyze with the same photo.</Text>
+            <TextInput
+              style={styles.speciesInput}
+              placeholder="e.g. Rose, Basil, Spider Plant…"
+              placeholderTextColor="#9ca3af"
+              value={speciesInput}
+              onChangeText={setSpeciesInput}
+              returnKeyType="done"
+              autoCorrect={false}
+            />
+            {speciesInput.trim().length > 0 && (
+              <TouchableOpacity
+                style={[styles.speciesReanalyzeBtn, reanalyzeMutation.isPending && styles.btnDisabled]}
+                disabled={reanalyzeMutation.isPending}
+                onPress={() =>
+                  reanalyzeMutation.mutate(
+                    { imageBase64: analysis.photoBase64!, zoneId: zones?.[0]?.id, speciesHint: speciesInput.trim() },
+                    {
+                      onSuccess: ({ analysisId: newId }) => {
+                        setSpeciesInput('');
+                        deleteMutation.mutate(analysisId);
+                        router.push({ pathname: '/(app)/plant-analysis', params: { id: newId } });
+                      },
+                      onError: () => Alert.alert('Failed', 'Could not re-analyze. Please try again.'),
+                    },
+                  )
+                }
+              >
+                {reanalyzeMutation.isPending
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <Text style={styles.speciesReanalyzeText}>Re-analyze as {speciesInput.trim()}</Text>
+                }
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {analysis.wateringNeeds.status !== 'unknown' && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Watering</Text>
+            <Text style={styles.waterStatus}>{analysis.wateringNeeds.status}</Text>
+            <Text style={styles.waterRec}>{analysis.wateringNeeds.recommendation}</Text>
+            {zones != null && zones.length > 0 && (
+              <TouchableOpacity
+                style={[styles.haButton, haAction.isPending && styles.haButtonDisabled]}
+                disabled={haAction.isPending}
+                onPress={() => {
+                  const zone = zones[0];
+                  if (zone != null) confirmHaAction('turn_on_water', zone.id);
+                }}
+              >
+                <Text style={styles.haButtonText}>
+                  {haAction.isPending ? 'Sending…' : 'Send to HA — Water Now'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {analysis.trimming.needed && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Trimming Needed</Text>
+            {analysis.trimming.areas.map((area, i) => (
+              <Text key={i} style={styles.trimArea}>{'• ' + area.description}</Text>
+            ))}
+          </View>
+        )}
+
+        <Text style={styles.timestamp}>
+          {new Date(analysis.timestamp).toLocaleString()}
+        </Text>
+      </ScrollView>
+
+      {/* Full-screen crop modal — GestureHandlerRootView required inside Modal */}
+      <Modal visible={cropMode} animationType="slide" statusBarTranslucent>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          {analysis.photoBase64 != null && (
+            <CropZoomView
+              imageBase64={analysis.photoBase64}
+              mimeType={analysis.photoMimeType}
+              onCrop={handleCrop}
+              onCancel={() => setCropMode(false)}
+            />
+          )}
+        </GestureHandlerRootView>
+      </Modal>
+    </>
   );
 }
 
@@ -205,12 +278,45 @@ const styles = StyleSheet.create({
     paddingTop: 56,
     paddingBottom: 12,
   },
-  topBarActions: { flexDirection: 'row', gap: 16, alignItems: 'center' },
+  topBarActions: { flexDirection: 'row', gap: 14, alignItems: 'center' },
   backText: { fontSize: 16, color: '#2d6a4f', fontWeight: '600' },
-  shareText: { fontSize: 16, color: '#2563eb', fontWeight: '600' },
+  cropText: { fontSize: 15, color: '#2563eb', fontWeight: '600' },
   deleteText: { fontSize: 16, color: '#dc2626', fontWeight: '600' },
-  species: { fontSize: 13, color: '#6b7280', fontStyle: 'italic', marginBottom: 6 },
-  imageContainer: { width: '100%', height: 300 },
+  correctTitle: { fontSize: 15, fontWeight: '700', color: '#374151', marginBottom: 4 },
+  correctSubtitle: { fontSize: 13, color: '#6b7280', marginBottom: 10, lineHeight: 18 },
+  speciesInput: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#111827',
+    backgroundColor: '#fff',
+  },
+  speciesReanalyzeBtn: {
+    marginTop: 10,
+    backgroundColor: '#2d6a4f',
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  speciesReanalyzeText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  btnDisabled: { opacity: 0.4 },
+  reanalyzeBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#2d6a4f',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+  },
+  reanalyzeText: { color: '#fff', fontSize: 14, fontWeight: '500' },
+  species: { fontSize: 13, color: '#6b7280', fontStyle: 'italic', marginBottom: 2 },
+  speciesConfidenceWarning: { fontSize: 11, color: '#d97706', marginBottom: 6 },
+  imageContainer: { width: '100%', aspectRatio: 1, overflow: 'hidden' },
   noPhoto: { backgroundColor: '#f3f4f6', justifyContent: 'center', alignItems: 'center' },
   noPhotoText: { color: '#9ca3af', fontSize: 14 },
   card: {

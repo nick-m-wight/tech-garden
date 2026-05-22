@@ -41,7 +41,7 @@ export function buildGardenApp(): express.Express {
   // Alert webhook uses inline express.raw() — must come before express.json().
   app.use('/garden', createAlertRouter(db));
 
-  app.use(express.json({ limit: '256kb' }));
+  app.use(express.json({ limit: '10mb' }));
   app.use(buildRoutes());
   app.use('/api/garden', createGardenRouter(db));
 

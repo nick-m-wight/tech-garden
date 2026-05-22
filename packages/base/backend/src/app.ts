@@ -30,7 +30,7 @@ export function buildApp(): express.Express {
 
   app.use(helmetMiddleware());
   app.use(corsMiddleware());
-  app.use(express.json({ limit: '256kb' }));
+  app.use(express.json({ limit: '10mb' }));
   app.use(defaultLimiter);
 
   app.use(buildRoutes());

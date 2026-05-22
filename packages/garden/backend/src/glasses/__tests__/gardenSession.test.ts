@@ -292,6 +292,7 @@ describe('Flow 1 — voice transcription → HA sensor read → speak', () => {
     mockAnalysePlant.mockResolvedValue({
       title: 'Plant — early mildew',
       species: 'Unknown',
+      speciesConfidence: 'low',
       spokenSummary: 'Early signs of mildew on upper leaves.',
       diagnosis: { overallHealth: 'fair', issues: [] },
       recommendations: [],
@@ -341,6 +342,7 @@ describe('Flow 2 — button press → photo capture → Claude Vision → speak'
   const fakeAnalysis: PlantAnalysisResponse = {
     title: 'Plant — powdery mildew',
     species: 'Unknown',
+    speciesConfidence: 'medium',
     spokenSummary: 'I see early signs of powdery mildew on the upper leaves.',
     diagnosis: {
       overallHealth: 'fair',

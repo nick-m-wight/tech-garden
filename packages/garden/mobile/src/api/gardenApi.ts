@@ -46,14 +46,14 @@ export interface AnalysisDetail {
   timestamp: string;
   title: string;
   species: string | null;
+  speciesConfidence: 'high' | 'medium' | 'low';
   diagnosis: {
     overallHealth: string;
     issues: Issue[];
-    confidence: number;
   };
   recommendations: Recommendation[];
   annotationPoints: AnnotationPoint[];
-  trimming: { needed: boolean; areas: string[] };
+  trimming: { needed: boolean; areas: Array<{ description: string }> };
   wateringNeeds: { status: string; recommendation: string };
   spokenSummary: string;
 }
@@ -89,6 +89,35 @@ export function useDeleteAnalysis() {
   return useMutation({
     mutationFn: (analysisId: string) =>
       apiClient.del<void>(`/api/garden/analyses/${analysisId}`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['garden', 'analyses'] });
+    },
+  });
+}
+
+export interface CropRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export function useReanalyze() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ imageBase64, cropRect, zoneId, speciesHint }: { imageBase64: string; cropRect?: CropRect; zoneId?: string; speciesHint?: string }) =>
+      apiClient.post<{ analysisId: string; spokenSummary: string }>('/api/garden/reanalyze', { imageBase64, cropRect, zoneId, speciesHint }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['garden', 'analyses'] });
+    },
+  });
+}
+
+export function useDeleteAnalysesBulk() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (analysisIds: string[]) =>
+      Promise.all(analysisIds.map((id) => apiClient.del<void>(`/api/garden/analyses/${id}`))),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['garden', 'analyses'] });
     },
